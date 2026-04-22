@@ -16,7 +16,7 @@ source venv/bin/activate
 
 # 3. Upgrade pip and install core requirements
 pip install --upgrade pip
-pip install fastapi uvicorn requests psutil watchdog python-dotenv
+pip install fastapi uvicorn requests psutil watchdog apscheduler python-dotenv sqlmodel pydantic-settings psycopg2-binary
 
 # 4. Create directory structure if missing
 mkdir -p apps core shared data logs

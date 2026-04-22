@@ -14,6 +14,14 @@ services:
       # Maps the database files to your local folder for persistence
       - ./data/postgres:/var/lib/postgresql/data
 
+  tunnel:
+    image: cloudflare/cloudflared:latest
+    restart: always
+    command: tunnel --no-autoupdate run --token ${CLOUDFLARE_TOKEN}
+    env_file: .env
+    depends_on:
+      - db
+
   # Optional: Admin interface to view your data via browser (uncomment to use)
   # pgadmin:
   #   image: dpage/pgadmin4
