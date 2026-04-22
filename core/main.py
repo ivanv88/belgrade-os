@@ -1,11 +1,11 @@
 from fastapi import FastAPI
+from core.loader import load_plugins
 
-app = FastAPI()
+app = FastAPI(title="Belgrade AI OS")
 
 @app.get("/")
 async def root():
-    return {
-        "message": "Zdravo, Laurent!",
-        "status": "Running on 4GB Pi",
-        "tunnel": "Active"
-    }
+    return {"message": "Zdravo, Laurent!", "system": "Belgrade OS Core"}
+
+# This is where the magic happens
+load_plugins(app)
