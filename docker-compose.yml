@@ -1,0 +1,26 @@
+services:
+  db:
+    image: postgres:15-alpine
+    container_name: belgrade-db
+    restart: always
+    environment:
+      # These variables will be pulled from your .env file
+      POSTGRES_USER: laurent
+      POSTGRES_PASSWORD: ${DB_PASSWORD}
+      POSTGRES_DB: belgrade_os
+    ports:
+      - "5432:5432"
+    volumes:
+      # Maps the database files to your local folder for persistence
+      - ./data/postgres:/var/lib/postgresql/data
+
+  # Optional: Admin interface to view your data via browser (uncomment to use)
+  # pgadmin:
+  #   image: dpage/pgadmin4
+  #   container_name: belgrade-pgadmin
+  #   restart: always
+  #   environment:
+  #     PGADMIN_DEFAULT_EMAIL: laurent@example.com
+  #     PGADMIN_DEFAULT_PASSWORD: ${DB_PASSWORD}
+  #   ports:
+  #     - "8080:80"
