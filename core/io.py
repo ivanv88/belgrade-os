@@ -1,7 +1,8 @@
 from __future__ import annotations
 from pathlib import Path
-from typing import Any, List
+from typing import Any, Dict, List
 from typing import Protocol, runtime_checkable
+import yaml
 
 
 @runtime_checkable
@@ -42,3 +43,30 @@ class LocalAdapter:
 
     async def delete(self, path: str) -> None:
         self._resolve(path).unlink()
+
+
+class ObsidianAdapter:
+    def __init__(self, base_path: Path) -> None:
+        self._local = LocalAdapter(base_path)
+
+    async def read(self, path: str) -> Dict[str, Any]:
+        content = await self._local.read(path)
+        if content.startswith("---"):
+            parts = content.split("---", 2)
+            if len(parts) >= 3:
+                frontmatter = yaml.safe_load(parts[1]) or {}
+                body = parts[2].strip()
+                return {"frontmatter": frontmatter, "body": body}
+        return {"frontmatter": {}, "body": content}
+
+    async def write(self, path: str, data: Dict[str, Any]) -> None:
+        frontmatter = data.get("frontmatter", {})
+        body = data.get("body", "")
+        content = f"---\n{yaml.dump(frontmatter, default_flow_style=False)}---\n{body}"
+        await self._local.write(path, content)
+
+    async def list(self, path: str = "") -> List[str]:
+        return await self._local.list(path)
+
+    async def delete(self, path: str) -> None:
+        await self._local.delete(path)
