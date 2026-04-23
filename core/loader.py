@@ -6,7 +6,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from pydantic import ValidationError
 from sqlalchemy import text
 
@@ -182,7 +182,10 @@ def _register_hook(
     ctx_factory: Callable[[], Any],
     event_bus: EventBus,
 ) -> None:
-    async def handler() -> Dict[str, str]:
+    from core.auth import verify_request_identity
+
+    async def handler(request: Request) -> Dict[str, str]:
+        verify_request_identity(dict(request.headers))
         ctx = await ctx_factory()
         await safe_execute(app_id, ctx, event_bus)
         return {"status": "ok", "app_id": app_id}

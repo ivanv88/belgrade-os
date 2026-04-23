@@ -1,7 +1,7 @@
 from __future__ import annotations
 import logging
 from typing import Any, Callable, Optional
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
 from core.models.manifest import AppManifest
 
 logger = logging.getLogger(__name__)
@@ -9,12 +9,6 @@ logger = logging.getLogger(__name__)
 
 def build_mcp_tool_name(manifest: AppManifest) -> str:
     return f"run_{manifest.app_id.replace('-', '_')}"
-
-
-def validate_cloudflare_header(value: Optional[str]) -> bool:
-    if not value:
-        raise ValueError("Cloudflare Access Identity header is required")
-    return True
 
 
 def register_mcp_tools(
@@ -42,16 +36,14 @@ def register_mcp_tools(
 
         @mcp.tool(name=tool_name, description=description)
         async def run_app(
-            cf_access: Optional[str] = None,
+            request: Request,
             _app_id: str = app_id,
             _factory: Any = ctx_factory,
             _bus: Any = event_bus,
         ) -> dict[str, str]:
+            from core.auth import verify_request_identity
             from core.executor import safe_execute
-            try:
-                validate_cloudflare_header(cf_access)
-            except ValueError as e:
-                raise HTTPException(status_code=401, detail=str(e))
+            verify_request_identity(dict(request.headers))
             if _factory is None:
                 raise HTTPException(status_code=500, detail=f"No factory for {_app_id}")
             ctx = await _factory()

@@ -4,6 +4,8 @@ class Settings(BaseSettings):
     db_password: str
     ntfy_topic: str = "laurent_beg_os_2026"
     gemini_api_key: str | None = None
+    tunnel_provider: str = "none"
+    tunnel_auth_header: str = ""
 
     class Config:
         env_file = ".env"
