@@ -1,71 +1,83 @@
-# 🇷🇸 Belgrade AI OS: Specification & Roadmap
+# Belgrade AI OS: Vision & Roadmap
 
-**Version:** 1.0.0  
-**Host:** Raspberry Pi 4 (4GB RAM)  
-**Orchestrator:** MBP M2 (32GB RAM)  
-**Security:** Cloudflare Zero Trust (MFA)
+**Version:** 2.0.0
+**Host:** Raspberry Pi 4 (8GB RAM)
+**Storage:** 4TB WD Red HDD
+**Security:** Cloudflare Zero Trust (Email OTP)
 
 ---
 
 ## 1. System Vision
-A "Modular Monolith" designed for personal orchestration. The **Core** acts as a generic engine (the OS), while **Apps** (Nutrition, Agents, Health) act as pluggable modules. This allows for local-first intelligence with high portability.
+
+A "Modular Monolith" designed for personal orchestration. The **Core** acts as a platform engine (the Bootstrapper), while **Apps** act as pluggable, manifest-driven modules. Apps can be Workers, Observers, Bridges, or Orchestrators. The Admin Agent (Gemini 1.5 Pro) can discover, invoke, and deploy apps on demand via MCP. Obsidian is the universal client for apps without a custom UI.
+
+For full technical detail see `docs/tech.spec.md`.
+
+---
 
 ## 2. Technical Stack
+
 | Layer | Technology | Purpose |
-| :--- | :--- | :--- |
-| **Hardware** | Raspberry Pi 4 | 24/7 Production Host |
-| **Backend** | FastAPI + SQLModel | Generic Core + Plugin API |
-| **Frontend** | React + Vite + Shadcn/UI | PWA Management Interface |
-| **Database** | PostgreSQL (Docker) | Persistent Memory & Logs |
-| **Security** | Cloudflare Tunnel | Identity-based Access (beg-os.fyi) |
+|---|---|---|
+| **Hardware** | Raspberry Pi 4 (8GB) | 24/7 Production Host |
+| **Backend** | FastAPI + SQLModel | Bootstrapper + Plugin API |
+| **Database** | PostgreSQL 15 (Docker) | Per-app schemas |
+| **Sync** | CouchDB + LiveSync | Obsidian real-time sync |
+| **AI Agent** | Gemini 1.5 Pro (Docker) | Orchestration + self-healing |
+| **Security** | Cloudflare Tunnel | Identity-based access (beg-os.fyi) |
+| **Cloud** | Supabase | Metadata, AI logs, task queues only |
 
 ---
 
-## 3. Core Architecture (The Engine)
-
-### A. The Dynamic Loader
-The Core scans the `/apps` directory at runtime. If a folder contains a valid `api/routes.py`, it is automatically mounted. This ensures the Core remains generic and apps remain decoupled.
-
-### B. Global Context (`core/context.py`)
-Centralized source of truth for user-specific metrics to avoid hardcoding:
-- **User:** Laurent (38 yo, 190cm, 104kg)
-- **Goal:** 20% Calorie Deficit
-- **Location:** Belgrade, Serbia
-
-### C. The Plugin Contract
-Each app in `/apps` follows this structure:
-- `api/routes.py`: Endpoints for the UI.
-- `models.py`: SQLModel database schemas.
-- `main.py`: Background async worker logic.
-
----
-
-## 4. Implementation Roadmap
+## 3. Implementation Roadmap
 
 ### ✅ Phase 1: Infrastructure (Complete)
-- [x] Cloudflare Tunnel & Zero Trust Auth (Email OTP).
-- [x] GitHub Monorepo sync between MBP M2 and Pi.
-- [x] Professional modular folder architecture.
-- [x] PostgreSQL Docker container running on Pi.
+- [x] Cloudflare Tunnel & Zero Trust Auth (Email OTP)
+- [x] GitHub Monorepo sync between MBP M2 and Pi
+- [x] PostgreSQL Docker container
+- [x] Cloudflared tunnel service in docker-compose
+- [x] Architecture spec and CLAUDE.md
 
-### 🕒 Phase 2: Persistence & Context (Current)
-- [ ] **Global Context:** Implement `core/context.py` with metabolic calculation logic.
-- [ ] **DB Connection:** Establish the SQLAlchemy/SQLModel bridge to Postgres.
-- [ ] **Migrations:** Auto-generate tables on system startup.
+### 🕒 Phase 2: Platform Core (Current)
+- [ ] `core/models/manifest.py` — Pydantic v2 `AppManifest` schema
+- [ ] `core/loader.py` — Bootstrapper (manifest discovery, provisioning, trigger registration)
+- [ ] `core/context.py` — `AppContext` typed class (`io`, `db`, `notify`, `emit`, `meta`)
+- [ ] `core/io.py` — IO adapter classes (local, obsidian, gdrive)
+- [ ] `core/eventbus.py` — internal asyncio.Queue pub/sub
+- [ ] `core/executor.py` — `safe_execute` wrapper (error handling, circuit breaker, semaphore)
+- [ ] `shared/ntfy.py` — ntfy.sh notification helper
+- [ ] mypy setup
 
-### ⬜ Phase 3: Module Alpha (Nutrition)
-- [ ] Define `NutritionLog` schema (Calories, Protein, Timestamp).
-- [ ] Build logic to calculate "Remaining Calories" based on 20% deficit.
-- [ ] Integrate `ntfy.sh` for push alerts when goals are met/missed.
+### ⬜ Phase 3: First App (Nutrition Worker)
+- [ ] `apps/nutrition/manifest.json` using the new contract
+- [ ] Nutrition `models.py` scoped to `app_nutrition` schema
+- [ ] `execute(ctx)` — nightly calorie deficit calculation at 20:00
+- [ ] ntfy.sh alert when goal met/missed
 
-### ⬜ Phase 4: Interface & Agents
-- [ ] **React Shell:** Build the dashboard on M2 using Shadcn.
-- [ ] **Coding Agents:** Orchestrate parallel local agents for repo management.
-- [ ] **Obsidian Sync:** Agent to scan markdown notes for task extraction.
+### ⬜ Phase 4: Admin Agent
+- [ ] Tecnativa docker-socket-proxy service in docker-compose (filters Docker API)
+- [ ] Admin Agent container with scoped volume mounts (`/apps` RW, `core/` RO, family data not mounted)
+- [ ] All managed containers labelled `beg-os.managed=true`
+- [ ] FastMCP `/mcp/sse` endpoint with Cloudflare Access auth
+- [ ] MCP tool auto-generation from `mcp_enabled` manifests
+- [ ] Agent subscribed to `system.*` — reads logs, proposes fixes via ntfy.sh, applies on approval
+- [ ] System backup cron script at `/mnt/storage/backups/backup.sh` (weekly, outside platform)
+
+### ⬜ Phase 5: Obsidian Integration
+- [ ] CouchDB service in docker-compose
+- [ ] Observer pattern app reacting to vault file saves
+- [ ] obsidian adapter (`write` → frontmatter + MD, `read` → parsed dict)
+
+### ⬜ Phase 6: Orchestrators
+- [ ] Gmail API connector in `/shared`
+- [ ] Google Drive connector + gdrive adapter (write-through cache)
+- [ ] First Orchestrator app (email attachments or Drive sync)
 
 ---
 
-## 5. Security & Data Policy
-- **Access Control:** Restricted to specific emails via Cloudflare Zero Trust.
-- **Persistence:** All data stored in `/data/postgres` (Git-ignored).
-- **Secrets:** Managed via `.env` file; never committed to version control.
+## 4. Security & Data Policy
+
+- **Access Control:** Restricted to specific emails via Cloudflare Zero Trust
+- **Persistence:** Live data in `/data/postgres` and `/mnt/storage` — git-ignored, never committed
+- **Secrets:** Managed via `.env` file only
+- **Family data:** Never leaves the Pi — Supabase is for metadata and AI logs only

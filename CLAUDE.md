@@ -14,99 +14,112 @@ docker-compose up -d
 
 # Run the FastAPI server (from project root, venv active)
 uvicorn core.main:app --reload
+
+# Type checking
+mypy .
 ```
 
-Dependencies are installed via `setup.sh` (no requirements.txt). Core packages: `fastapi`, `uvicorn`, `sqlmodel`, `pydantic-settings`, `psycopg2-binary`, `apscheduler`, `watchdog`, `python-dotenv`.
+Dependencies via `setup.sh`: `fastapi`, `uvicorn`, `sqlmodel`, `pydantic-settings`, `psycopg2-binary`, `apscheduler`, `watchdog`, `python-dotenv`, `mypy`.
 
 ## Architecture
 
-Belgrade AI OS is a **modular monolith** running on a Raspberry Pi 4 (8GB) + 4TB WD Red HDD (`/mnt/storage`). The Core is a platform engine (Bootstrapper) that discovers, mounts, and runs Apps. The Admin Agent (Gemini 1.5 Pro in Docker) orchestrates the platform and can deploy new apps on demand.
+Belgrade AI OS is a **modular monolith** on Raspberry Pi 4 (8GB) + 4TB WD Red HDD. The Core is a generic platform engine (Bootstrapper) — no app-specific types or knowledge in `core/`. Full spec in `docs/tech.spec.md`.
 
 ### App anatomy
 
-Every app lives at `/apps/<app-id>/` and must contain:
-
 ```
 /apps/<app-id>/
-├── manifest.json   # declares pattern, triggers, storage scope
-└── main.py         # entry point: async def execute(ctx): ...
+├── manifest.json   # required: triggers, storage, mcp contract
+├── main.py         # required: async def execute(ctx: AppContext) -> None
+├── models.py       # optional: SQLModel tables → app_{id} schema
+├── events.py       # optional: EVENT_SCHEMAS dict for emitted topics
+└── metrics.py      # optional: MetricsSchema — typed view of shared.config
 ```
 
 ### App patterns
 
-| Pattern | Trigger | Data Flow | Use case |
-|---|---|---|---|
-| Worker | `cron` | Pi ↔ Pi | Nightly jobs, DB processing |
-| Observer | `observer` (file change) | Obsidian → Logic → Obsidian | React to vault file saves |
-| Bridge | `hook` (HTTP) | AI → UI → User | Micro-UIs (Streamlit/Vite) |
-| Orchestrator | `hook` + multi-step | External → AI → Logic → Pi | Gmail, Drive, complex flows |
+| Pattern | Trigger | Use case |
+|---|---|---|
+| Worker | `cron` | Nightly jobs, DB processing |
+| Observer | `observer` | React to Obsidian vault file saves |
+| Bridge | `hook` (HTTP) | Micro-UIs (Streamlit/Vite) |
+| Orchestrator | `hook` + multi-step | Gmail, Drive, complex flows |
 
-### Manifest schema
+### Trigger types
 
-```json
-{
-  "app_id": "nutrition",
-  "description": "Tracks daily calorie deficit",
-  "pattern": "worker",
-  "mcp_enabled": false,
-  "triggers": [
-    { "type": "cron", "schedule": "0 20 * * *" }
-  ],
-  "storage": {
-    "scope": "nutrition",
-    "adapter": "local"
-  }
-}
-```
+| Type | Maps to | Key field |
+|---|---|---|
+| `cron` | APScheduler | `schedule` |
+| `observer` | watchdog (thread→asyncio bridge) | `path` |
+| `hook` | FastAPI `add_api_route` | — |
+| `event` | internal EventBus | `topic` (`{origin}.{event_type}`) |
 
-`adapter` options: `local` (default), `obsidian` (markdown transformer), `gdrive` (write-through cache, async up-sync).
+### Bootstrapper (`core/loader.py`) — startup sequence
 
-### The Bootstrapper (`core/loader.py`)
+1. Parse + validate manifest (`core/models/manifest.py`)
+2. Provision — `CREATE SCHEMA IF NOT EXISTS app_{id}`, `mkdir ./data/apps/{id}/`
+3. Import `models.py` → `create_all` for this app's schema
+4. Import `events.py` → register schemas with EventBus Schema Registry
+5. Import `metrics.py` → register `MetricsSchema` with hydration layer
+6. Build Subscription Map (`topic → [app_ids]`) from `event` triggers
+7. Register all triggers; register MCP tools for `mcp_enabled` apps
+8. On trigger fire → `safe_execute(app_id, ctx)`
 
-On startup, for each manifest found in `/apps/*/manifest.json`:
+Apps are **lazy-loaded** — `main.py` imported only when a trigger fires.
 
-1. Parse + validate manifest (Pydantic)
-2. Provision resources — `CREATE SCHEMA IF NOT EXISTS app_{id}`, `mkdir ./data/apps/{id}/`
-3. Register triggers:
-   - `cron` → `apscheduler.schedulers.asyncio.AsyncIOScheduler`
-   - `observer` → `watchdog.observers.Observer` (runs in a thread — bridge to asyncio via `asyncio.run_coroutine_threadsafe(execute(ctx), loop)`)
-   - `hook` → `app.add_api_route()` on the FastAPI instance
-4. On trigger fire → construct fresh `ctx` and call `execute(ctx)`
+### Execution: `safe_execute` (`core/executor.py`)
 
-`ctx` is a **factory** (not a singleton) — a new instance is constructed per invocation so `ctx.db` sessions are never shared across calls.
+- `asyncio.Semaphore(3)` — max concurrent executions
+- Error tiers: Logic (catch+log), Transient (retry+backoff), Resource (system halt)
+- Circuit breaker: 3 failures/10min → app disabled → `system.circuit_broken` emitted
+- `finally` always rolls back `ctx.db` and closes handles
 
-### The Context API (`ctx`)
+### Context API (`ctx: AppContext`)
 
-| Property | What it provides |
-|---|---|
-| `ctx.io` | Adapter-wrapped file ops. App calls `ctx.io.write("log.md")` — platform resolves absolute path. Adapter (`local`, `obsidian`, `gdrive`) injected transparently. |
-| `ctx.db` | Scoped to the app's own Postgres schema (`app_{id}`). Fresh session per invocation. |
-| `ctx.notify` | Push notifications via ntfy.sh |
-| `ctx.meta` | `app_id`, current timestamp, resolved secrets |
+| Property | Access | Description |
+|---|---|---|
+| `ctx.user` | read-only | Stable identity from `identity.json` (name, email, timezone) |
+| `ctx.metrics` | read-only | App's typed view of `shared.config` JSONB, validated against app's own `MetricsSchema` |
+| `ctx.db` | read/write | `AsyncSession` scoped to `app_{id}` schema |
+| `ctx.io` | read/write | Adapter-wrapped file ops, base path pre-resolved |
+| `ctx.emit(topic, data)` | write | EventBus publish. Validated at emit (fail-fast). Topics: `{origin}.{event_type}` |
+| `ctx.notify` | write | ntfy.sh push to device |
+| `ctx.meta` | read-only | `app_id`, timestamp, secrets |
 
-### Storage adapter model
+### User state — three tiers
 
-Local FS (`./data/apps/{scope}/`) is always the source of truth. Adapters are lenses over it:
+| Tier | Storage | Access |
+|---|---|---|
+| Identity | `identity.json` | `ctx.user` — immutable (name, height, DOB, timezone) |
+| Metrics | `shared.config` JSONB + `shared.current_metrics` view | `ctx.metrics` — mutable (weight, goals, preferences) |
+| App state | `app_{id}.*` tables | `ctx.db` — private per-app data |
 
-- **`local`** — raw file ops, no transformation
-- **`obsidian`** — `write(data)` serialises to YAML frontmatter + Markdown body; `read()` parses back to `{ frontmatter: dict, body: str }`
-- **`gdrive`** — `write()` is non-blocking; local write completes immediately, admin agent handles up-sync in background (write-through cache)
+Only apps with `"config": { "shared_write": true }` in their manifest can write to `shared.config`.
 
-Apps never see absolute paths — the base path is injected into `ctx.io` at boot.
+### EventBus — Schema Registry
+
+Platform is generic. Apps own their schemas in `events.py`. Bootstrapper registers them; platform calls `model.model_validate(data)` without knowing field names.
+
+Validation tiers: `system.*` always strict → registered schemas always validated → unregistered topics permissive (dict + warning).
+
+Validated Pydantic objects (never raw dicts) are dispatched to subscribers. When an app is deleted, its schemas vanish automatically.
 
 ### Shared infrastructure
 
-- `shared/database.py` — SQLModel engine (`localhost:5432`, db `belgrade_os`, user `laurent`). Per-app schemas provisioned by the Bootstrapper.
-- `core/config.py` — `pydantic_settings` from `.env`. Required: `DB_PASSWORD`. Optional: `NTFY_TOPIC`, `GEMINI_API_KEY`, `CLOUDFLARE_TOKEN`.
-- `shared/` — domain connectors (Google Drive, Gmail, Obsidian REST). Used internally by adapters, not called directly by apps.
+- `shared/database.py` — SQLModel engine (`localhost:5432`, db `belgrade_os`, user `laurent`)
+- `core/config.py` — pydantic_settings from `.env`. Required: `DB_PASSWORD`. Optional: `NTFY_TOPIC`, `GEMINI_API_KEY`, `CLOUDFLARE_TOKEN`
+- `shared/` — Google Drive, Gmail, Obsidian REST connectors. Used by adapters only, never imported directly by apps.
 
 ## Deployment
 
-- **Production host:** Raspberry Pi 4 (8GB), FastAPI runs bare-metal; everything else in Docker.
-- **Storage:** WD Red HDD at `/mnt/storage`. Family data at `/mnt/storage/shares/family/obsidian`.
-- **Access:** Cloudflare Tunnel (`beg-os.fyi`) + Zero Trust email OTP. `tunnel` service in `docker-compose.yml` runs `cloudflared`.
-- **Obsidian sync:** Self-hosted CouchDB (Docker) + Obsidian LiveSync plugin. Primary UI for all apps that don't need a custom interface.
-- **Admin Agent:** Gemini 1.5 Pro in Docker with `docker.sock` access — discovers apps via MCP, can hot-deploy new services, parses logs for self-healing.
-- **Monitoring:** Dozzle (JSON logs), internal health API (CPU/temp, WD Red capacity).
-- **Cloud:** Supabase for structured metadata, AI logs, and high-availability task queues only. Family data never leaves the Pi.
-- `/data/postgres` holds live Postgres data — git-ignored, never commit.
+- **Host:** Raspberry Pi 4 (8GB), FastAPI bare-metal; everything else Docker
+- **Storage:** `/mnt/storage`. Family data at `/mnt/storage/shares/family/obsidian`
+- **Access:** Cloudflare Tunnel (`beg-os.fyi`) + Zero Trust email OTP
+- **Obsidian sync:** CouchDB (Docker) + LiveSync. Obsidian is the edit interface for `shared.config` via Observer sync loop
+- **Admin Agent:** Gemini 1.5 Pro in Docker. Volume mounts: `/apps` RW, `core/` RO, family data not mounted. Subscribes to `system.*` via MCP. Phase 1: read logs + propose fixes via ntfy.sh + apply on human approval. Phase 2 (later): autonomous writes per-scope.
+- **Docker access:** via Tecnativa socket-proxy (not raw `docker.sock`). `CONTAINERS=1`, `POST=1`, `NETWORKS=0`, `VOLUMES=0`. Only manages containers labelled `beg-os.managed=true`.
+- **MCP:** FastMCP at `/mcp/sse`, `X-Cloudflare-Access-Identity` auth, tools auto-generated from manifests
+- **Backup:** system cron (`0 3 * * 0`) at `/mnt/storage/backups/backup.sh` — pg_dump both DBs + rsync Obsidian vault, 4-week retention. Runs outside the platform.
+- **Monitoring:** Dozzle (JSON logs)
+- **Cloud:** Supabase for metadata/AI logs only — family data never leaves the Pi
+- `/data/postgres` — git-ignored, never commit
