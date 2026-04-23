@@ -1,20 +1,29 @@
-import requests
+from __future__ import annotations
+from typing import Optional
+import httpx
 
-# Use the EXACT same string you subscribed to in the app
-TOPIC = "laurent_beg_os_2026" 
 
-def notify(message: str, title: str = "Belgrade OS", tags: str = "rocket"):
-    try:
-        requests.post(
-            f"https://ntfy.sh/{TOPIC}",
-            data=message.encode('utf-8'),
-            headers={
-                "Title": title,
-                "Tags": tags,
-                "Priority": "high"
-            }
-        )
-        return True
-    except Exception as e:
-        print(f"Notification failed: {e}")
-        return False
+NTFY_BASE_URL = "https://ntfy.sh"
+
+
+class NotifyService:
+    def __init__(self, topic: Optional[str]) -> None:
+        self._topic = topic
+
+    async def send(
+        self,
+        message: str,
+        title: str = "",
+        priority: str = "default",
+    ) -> None:
+        if not self._topic:
+            return
+        headers: dict[str, str] = {"Priority": priority}
+        if title:
+            headers["Title"] = title
+        async with httpx.AsyncClient() as client:
+            await client.post(
+                f"{NTFY_BASE_URL}/{self._topic}",
+                content=message.encode(),
+                headers=headers,
+            )
