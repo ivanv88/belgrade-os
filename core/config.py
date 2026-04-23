@@ -2,7 +2,7 @@ from pydantic_settings import BaseSettings
 
 class Settings(BaseSettings):
     db_password: str
-    ntfy_topic: str = "laurent_beg_os_2026"
+    ntfy_topic: str = ""
     gemini_api_key: str | None = None
     tunnel_provider: str = "none"
     tunnel_auth_header: str = ""
