@@ -63,3 +63,16 @@ async def test_ctx_cleanup_rolls_back_db(tmp_dir: Path) -> None:
     await ctx.cleanup()
     db_session.rollback.assert_called_once()
     db_session.close.assert_called_once()
+
+
+async def test_ctx_cleanup_survives_db_failure(tmp_dir: Path) -> None:
+    db_session = AsyncMock()
+    db_session.rollback.side_effect = Exception("connection lost")
+    db_session.close.side_effect = Exception("connection lost")
+    ctx = AppContext(
+        user=make_user(), metrics={}, db=db_session,
+        io=LocalAdapter(tmp_dir), event_bus=EventBus(),
+        notify=NotifyService(topic="t"), meta=make_meta(),
+    )
+    # Should not raise even when both DB calls fail
+    await ctx.cleanup()

@@ -1,4 +1,5 @@
 from __future__ import annotations
+import asyncio
 from pathlib import Path
 from typing import Any, Dict, List
 from typing import Protocol, runtime_checkable
@@ -28,21 +29,23 @@ class LocalAdapter:
         target = self._resolve(path)
         if not target.exists():
             raise FileNotFoundError(f"{path} not found in {self._base}")
-        return target.read_text()
+        return await asyncio.to_thread(target.read_text)
 
     async def write(self, path: str, data: str) -> None:
         target = self._resolve(path)
         target.parent.mkdir(parents=True, exist_ok=True)
-        target.write_text(data)
+        await asyncio.to_thread(target.write_text, data)
 
     async def list(self, path: str = "") -> List[str]:
         target = self._resolve(path) if path else self._base
         if not target.exists():
             return []
-        return [str(p.relative_to(self._base)) for p in target.iterdir()]
+        return await asyncio.to_thread(
+            lambda: [str(p.relative_to(self._base)) for p in target.iterdir()]
+        )
 
     async def delete(self, path: str) -> None:
-        self._resolve(path).unlink()
+        await asyncio.to_thread(self._resolve(path).unlink)
 
 
 class ObsidianAdapter:

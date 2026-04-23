@@ -1,5 +1,6 @@
 import pytest
-from core.mcp import build_mcp_tool_name, validate_cloudflare_header
+from unittest.mock import AsyncMock, patch, MagicMock
+from core.mcp import build_mcp_tool_name, validate_cloudflare_header, register_mcp_tools
 from core.models.manifest import AppManifest, AppStorage, AppConfig
 
 
@@ -39,3 +40,9 @@ def test_cloudflare_header_missing_raises() -> None:
 def test_cloudflare_header_empty_raises() -> None:
     with pytest.raises(ValueError, match="Cloudflare"):
         validate_cloudflare_header("")
+
+
+def test_register_mcp_tools_signature_accepts_event_bus() -> None:
+    import inspect
+    sig = inspect.signature(register_mcp_tools)
+    assert "event_bus" in sig.parameters

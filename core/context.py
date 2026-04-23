@@ -1,7 +1,10 @@
 from __future__ import annotations
-from dataclasses import dataclass, field
+import logging
+from dataclasses import dataclass
 from datetime import datetime
 from typing import Any, Dict
+
+logger = logging.getLogger(__name__)
 from sqlalchemy.ext.asyncio import AsyncSession
 from core.io import IOAdapter
 from core.models.user import User
@@ -38,5 +41,11 @@ class AppContext:
         await self._event_bus.emit(topic, data)
 
     async def cleanup(self) -> None:
-        await self.db.rollback()
-        await self.db.close()
+        try:
+            await self.db.rollback()
+        except Exception as e:
+            logger.warning("DB rollback failed during cleanup: %s", e)
+        try:
+            await self.db.close()
+        except Exception as e:
+            logger.warning("DB close failed during cleanup: %s", e)

@@ -21,6 +21,7 @@ def register_mcp_tools(
     app: FastAPI,
     manifests: list[AppManifest],
     ctx_factories: dict[str, Callable[[], Any]],
+    event_bus: Any,
 ) -> None:
     try:
         from fastmcp import FastMCP
@@ -44,12 +45,18 @@ def register_mcp_tools(
             cf_access: Optional[str] = None,
             _app_id: str = app_id,
             _factory: Any = ctx_factory,
+            _bus: Any = event_bus,
         ) -> dict[str, str]:
+            from core.executor import safe_execute
             try:
                 validate_cloudflare_header(cf_access)
             except ValueError as e:
                 raise HTTPException(status_code=401, detail=str(e))
-            return {"status": "triggered", "app_id": _app_id}
+            if _factory is None:
+                raise HTTPException(status_code=500, detail=f"No factory for {_app_id}")
+            ctx = await _factory()
+            await safe_execute(_app_id, ctx, _bus)
+            return {"status": "ok", "app_id": _app_id}
 
         logger.info("MCP tool registered: %s", tool_name)
 
