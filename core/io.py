@@ -18,7 +18,10 @@ class LocalAdapter:
         self._base.mkdir(parents=True, exist_ok=True)
 
     def _resolve(self, path: str) -> Path:
-        return self._base / path
+        resolved = (self._base / path).resolve()
+        if not resolved.is_relative_to(self._base.resolve()):
+            raise ValueError(f"Path '{path}' escapes the base directory")
+        return resolved
 
     async def read(self, path: str) -> str:
         target = self._resolve(path)

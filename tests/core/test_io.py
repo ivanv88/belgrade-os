@@ -42,3 +42,9 @@ async def test_base_path_is_injected(tmp_dir: Path) -> None:
     adapter = LocalAdapter(tmp_dir)
     await adapter.write("log.md", "data")
     assert (tmp_dir / "log.md").read_text() == "data"
+
+
+async def test_path_traversal_raises(tmp_dir: Path) -> None:
+    adapter = LocalAdapter(tmp_dir)
+    with pytest.raises(ValueError, match="escapes the base directory"):
+        await adapter.read("../../etc/passwd")
