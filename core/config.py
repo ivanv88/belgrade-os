@@ -8,4 +8,4 @@ class Settings(BaseSettings):
     class Config:
         env_file = ".env"
 
-settings = Settings()
+settings = Settings()  # type: ignore[call-arg]  # pydantic-settings reads db_password from env
