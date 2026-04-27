@@ -869,7 +869,7 @@ git commit -m "feat: add Redis 7 to docker-compose — Streams + Pub/Sub backbon
 - [x] Service directories scaffolded + .gitignore updated — Task 1 (`6cd55ba`, `bfe4d08`)
 - [x] `proto/belgrade_os.proto` with 8 message types + validates with protoc — Task 2 (`33b965d`, `8d69d19`, `fc3bc8d` — also added `trace_id` on Task/ToolCall/ThoughtEvent, `duration_ms` on ToolResult, `UNSPECIFIED` enum sentinel)
 - [x] Go codegen + 5 smoke tests passing in `gateway/gen/` — Task 3 (`657c174`, `a457944` — also fixed gitignore nested pattern)
-- [ ] Python codegen + 5 smoke tests passing in `runner/` and `inference/` — Task 4
+- [x] Python codegen + 6 smoke tests passing in `runner/` and `inference/` — Task 4 (`41615ac`, `2fbc6a5`, `d0e5e9f` — split runtime/dev requirements, conftest path fix, package collision fix)
 - [ ] Rust codegen via prost + 4 smoke tests passing in `bridge/` — Task 5
 - [ ] Makefile with proto/build/test/dev/clean/deps — Task 6
 - [ ] Redis 7 in docker-compose, PONG confirmed — Task 7
