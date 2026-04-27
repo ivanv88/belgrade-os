@@ -6,3 +6,24 @@ data/postgres/
 *.log
 .DS_Store
 .worktrees/
+
+# Proto generated code
+gateway/gen/
+runner/gen/
+inference/gen/
+
+# Go
+gateway/bin/
+gateway/*.test
+
+# Rust
+bridge/target/
+
+# Python service caches
+runner/__pycache__/
+runner/.pytest_cache/
+inference/__pycache__/
+inference/.pytest_cache/
+
+# Redis data
+data/redis/
