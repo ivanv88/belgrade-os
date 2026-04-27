@@ -871,5 +871,7 @@ git commit -m "feat: add Redis 7 to docker-compose — Streams + Pub/Sub backbon
 - [x] Go codegen + 5 smoke tests passing in `gateway/gen/` — Task 3 (`657c174`, `a457944` — also fixed gitignore nested pattern)
 - [x] Python codegen + 6 smoke tests passing in `runner/` and `inference/` — Task 4 (`41615ac`, `2fbc6a5`, `d0e5e9f` — split runtime/dev requirements, conftest path fix, package collision fix)
 - [x] Rust codegen via prost + 8 smoke tests passing in `bridge/` — Task 5 (`217232a`, `6444723` — also added cargo:rerun-if-changed for incremental builds)
+- [x] Makefile with `deps/proto/build/test/dev/clean` targets, `make test` passes all 25 tests across Go/Python/Rust — Task 6 (`e5be397` — fixed clean to preserve tracked test files, python→python3)
+- [x] Redis 7-alpine added to docker-compose, PONG confirmed — Task 7 (`b43eb49`)
 - [ ] Makefile with proto/build/test/dev/clean/deps — Task 6
 - [ ] Redis 7 in docker-compose, PONG confirmed — Task 7
