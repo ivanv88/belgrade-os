@@ -29,6 +29,7 @@ message ToolCall {
   string task_id    = 2;  // parent Task.task_id
   string tool_name  = 3;  // namespaced: "shopping:add_item"
   string input_json = 4;  // JSON object matching Tool.input_schema_json
+  string trace_id   = 5;  // propagated from Task.trace_id for distributed tracing
 }
 
 // Tool result: Resource Runner → Redis Stream "tasks:tool_results" → Inference Controller
@@ -45,10 +46,11 @@ message ToolResult {
 
 // Inference Controller → Redis Pub/Sub "sse:{task_id}" → Gateway → browser SSE
 message ThoughtEvent {
-  string           task_id = 1;
-  string           user_id = 2;
-  ThoughtEventType type    = 3;
-  string           content = 4;
+  string           task_id  = 1;
+  string           user_id  = 2;
+  ThoughtEventType type     = 3;
+  string           content  = 4;
+  string           trace_id = 5;  // propagated from Task.trace_id for distributed tracing
 }
 
 enum ThoughtEventType {
