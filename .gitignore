@@ -20,9 +20,7 @@ gateway/*.test
 bridge/target/
 
 # Python service caches
-runner/__pycache__/
 runner/.pytest_cache/
-inference/__pycache__/
 inference/.pytest_cache/
 
 # Redis data
