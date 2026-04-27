@@ -1,0 +1,82 @@
+syntax = "proto3";
+
+package belgrade_os;
+
+option go_package = "belgrade-os/gateway/gen;belgrade_os";
+
+// ─── Core workflow ────────────────────────────────────────────────────────────
+
+// Dropped by Edge Gateway into Redis Stream "tasks:inbound"
+message Task {
+  string task_id       = 1;  // UUID v4
+  string user_id       = 2;  // resolved from JWT sub claim
+  string prompt        = 3;
+  int64  created_at_ms = 4;  // Unix epoch milliseconds
+}
+
+// MCP tool definition — namespaced by Capability Bridge (e.g. "shopping:add_item")
+message Tool {
+  string name              = 1;
+  string description       = 2;
+  string input_schema_json = 3;  // JSON Schema object serialised as a string
+  string app_id            = 4;  // origin app (e.g. "shopping")
+}
+
+// Tool call: Inference Controller → Redis Stream "tasks:tool_calls" → Resource Runner
+message ToolCall {
+  string call_id    = 1;  // UUID v4, unique per invocation
+  string task_id    = 2;  // parent Task.task_id
+  string tool_name  = 3;  // namespaced: "shopping:add_item"
+  string input_json = 4;  // JSON object matching Tool.input_schema_json
+}
+
+// Tool result: Resource Runner → Redis Stream "tasks:tool_results" → Inference Controller
+message ToolResult {
+  string call_id     = 1;
+  string task_id     = 2;
+  bool   success     = 3;
+  string output_json = 4;  // non-empty on success=true
+  string error       = 5;  // non-empty on success=false
+}
+
+// ─── Streaming ────────────────────────────────────────────────────────────────
+
+// Inference Controller → Redis Pub/Sub "sse:{task_id}" → Gateway → browser SSE
+message ThoughtEvent {
+  string           task_id = 1;
+  string           user_id = 2;
+  ThoughtEventType type    = 3;
+  string           content = 4;
+}
+
+enum ThoughtEventType {
+  THINKING       = 0;
+  TOOL_USE       = 1;
+  RESPONSE_CHUNK = 2;
+  DONE           = 3;
+  ERROR          = 4;
+}
+
+// ─── Capability Bridge ────────────────────────────────────────────────────────
+
+// Resource Runner → Capability Bridge when an app is loaded or reloaded
+message AppToolsRegistration {
+  string        app_id = 1;
+  repeated Tool tools  = 2;
+}
+
+// Capability Bridge → Inference Controller in response to a tool-list query
+message ToolListResponse {
+  repeated Tool tools = 1;
+}
+
+// ─── Resource Runner ──────────────────────────────────────────────────────────
+
+// Stored in Redis key "lease:{worker_id}" during tool execution
+message WorkerLease {
+  string worker_id     = 1;
+  string task_id       = 2;
+  string call_id       = 3;
+  int64  leased_at_ms  = 4;
+  int64  expires_at_ms = 5;
+}
