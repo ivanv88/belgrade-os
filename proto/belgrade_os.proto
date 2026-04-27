@@ -12,6 +12,7 @@ message Task {
   string user_id       = 2;  // resolved from JWT sub claim
   string prompt        = 3;
   int64  created_at_ms = 4;  // Unix epoch milliseconds
+  string trace_id      = 5;  // propagated across all 5 services for distributed tracing
 }
 
 // MCP tool definition — namespaced by Capability Bridge (e.g. "shopping:add_item")
@@ -37,6 +38,7 @@ message ToolResult {
   bool   success     = 3;
   string output_json = 4;  // non-empty on success=true
   string error       = 5;  // non-empty on success=false
+  int64  duration_ms = 6;  // wall-clock execution time, used by circuit-breaker and observability
 }
 
 // ─── Streaming ────────────────────────────────────────────────────────────────
@@ -50,11 +52,12 @@ message ThoughtEvent {
 }
 
 enum ThoughtEventType {
-  THINKING       = 0;
-  TOOL_USE       = 1;
-  RESPONSE_CHUNK = 2;
-  DONE           = 3;
-  ERROR          = 4;
+  THOUGHT_EVENT_TYPE_UNSPECIFIED = 0;
+  THINKING                       = 1;
+  TOOL_USE                       = 2;
+  RESPONSE_CHUNK                 = 3;
+  DONE                           = 4;
+  ERROR                          = 5;
 }
 
 // ─── Capability Bridge ────────────────────────────────────────────────────────
