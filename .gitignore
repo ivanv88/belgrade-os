@@ -9,6 +9,7 @@ data/postgres/
 
 # Proto generated code — ignore .pb.go generated files, keep hand-written tests
 gateway/gen/*.pb.go
+gateway/gen/**/*.pb.go
 runner/gen/*.pb.go
 inference/gen/*.pb.go
 

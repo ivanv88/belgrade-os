@@ -75,8 +75,7 @@ func TestThoughtEventType(t *testing.T) {
 
 func TestThoughtEventDone(t *testing.T) {
 	ev := &belgrade.ThoughtEvent{
-		TaskId: "task-001",
-		Type:   belgrade.ThoughtEventType_DONE,
+		Type: belgrade.ThoughtEventType_DONE,
 	}
 	if ev.GetType() != belgrade.ThoughtEventType_DONE {
 		t.Fatalf("expected DONE, got %v", ev.GetType())
