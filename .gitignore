@@ -11,7 +11,11 @@ data/postgres/
 gateway/gen/*.pb.go
 gateway/gen/**/*.pb.go
 runner/gen/*.pb.go
+runner/gen/*_pb2.py
+runner/gen/**/*_pb2.py
 inference/gen/*.pb.go
+inference/gen/*_pb2.py
+inference/gen/**/*_pb2.py
 
 # Go
 gateway/bin/
