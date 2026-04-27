@@ -5,121 +5,119 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## Commands
 
 ```bash
-# First-time setup (installs system deps, creates venv)
-bash setup.sh
-source venv/bin/activate
+# Install toolchain (macOS, one-time)
+make deps
 
-# Start all Docker services (Postgres + CouchDB + Cloudflare tunnel)
-docker-compose up -d
+# Regenerate protobuf code for all services
+make proto
 
-# Run the FastAPI server (from project root, venv active)
-uvicorn core.main:app --reload
+# Build Go + Rust binaries (requires proto first)
+make build
 
-# Type checking
-mypy .
+# Run all tests across all services
+make test
+
+# Start Redis (required for integration tests and local dev)
+make dev                         # docker-compose up -d redis cloudflared
+
+# Per-service tests
+cd gateway  && go test ./... -v
+cd runner   && python3 -m pytest tests/ -v
+cd inference && python3 -m pytest tests/ -v
+cd bridge   && cargo test
+
+# Wipe generated artifacts
+make clean
 ```
-
-Dependencies via `setup.sh`: `fastapi`, `uvicorn`, `sqlmodel`, `pydantic-settings`, `psycopg2-binary`, `apscheduler`, `watchdog`, `python-dotenv`, `mypy`.
 
 ## Architecture
 
-Belgrade AI OS is a **modular monolith** on Raspberry Pi 4 (8GB) + 4TB WD Red HDD. The Core is a generic platform engine (Bootstrapper) — no app-specific types or knowledge in `core/`. Full spec in `docs/tech.spec.md`.
-
-### App anatomy
+Belgrade OS is a **distributed monorepo** running on Raspberry Pi 4 (8GB). Five services communicate exclusively through Redis — no direct inter-service calls.
 
 ```
-/apps/<app-id>/
-├── manifest.json   # required: triggers, storage, mcp contract
-├── main.py         # required: async def execute(ctx: AppContext) -> None
-├── models.py       # optional: SQLModel tables → app_{id} schema
-├── events.py       # optional: EVENT_SCHEMAS dict for emitted topics
-└── metrics.py      # optional: MetricsSchema — typed view of shared.config
+browser / Obsidian
+      │  HTTP + SSE
+      ▼
+┌─────────────┐   XADD tasks:inbound    ┌──────────────────────┐
+│Edge Gateway │ ──────────────────────► │Inference Controller  │
+│   (Go)      │                         │     (Python)         │
+│             │ ◄────────────────────── │                      │
+└─────────────┘  PUB sse:{task_id}      └──────────┬───────────┘
+                                                    │ XADD tasks:tool_calls
+                                                    ▼
+                                         ┌──────────────────────┐
+                                         │  Resource Runner     │
+                                         │    (Python)          │
+                                         └──────────┬───────────┘
+                                                    │ XADD tasks:tool_results
+                                                    ▼
+                                         ┌──────────────────────┐
+                                         │ Capability Bridge    │
+                                         │     (Rust)           │
+                                         │  tool registry       │
+                                         └──────────────────────┘
 ```
 
-### App patterns
+### Services
 
-| Pattern | Trigger | Use case |
+| Dir | Language | Role |
 |---|---|---|
-| Worker | `cron` | Nightly jobs, DB processing |
-| Observer | `observer` | React to Obsidian vault file saves |
-| Bridge | `hook` (HTTP) | Micro-UIs (Streamlit/Vite) |
-| Orchestrator | `hook` + multi-step | Gmail, Drive, complex flows |
+| `gateway/` | Go | HTTP entry point — JWT auth, task ingestion, SSE proxy |
+| `inference/` | Python | Inference Controller — calls Claude API, drives tool loop |
+| `runner/` | Python | Resource Runner — executes tool calls from apps |
+| `bridge/` | Rust | Capability Bridge — tool registry, serves tool lists |
 
-### Trigger types
+### Redis transport
 
-| Type | Maps to | Key field |
+| Channel | Type | Producer → Consumer |
 |---|---|---|
-| `cron` | APScheduler | `schedule` |
-| `observer` | watchdog (thread→asyncio bridge) | `path` |
-| `hook` | FastAPI `add_api_route` | — |
-| `event` | internal EventBus | `topic` (`{origin}.{event_type}`) |
+| `tasks:inbound` | Stream (XREADGROUP) | Gateway → Inference Controller |
+| `tasks:tool_calls` | Stream (XREADGROUP) | Inference Controller → Resource Runner |
+| `tasks:tool_results` | Stream (XREADGROUP) | Resource Runner → Inference Controller |
+| `sse:{task_id}` | Pub/Sub | Inference Controller → Gateway → browser |
+| `lease:{worker_id}` | Key (TTL) | Resource Runner worker leases |
 
-### Bootstrapper (`core/loader.py`) — startup sequence
+### Proto contract
 
-1. Parse + validate manifest (`core/models/manifest.py`)
-2. Provision — `CREATE SCHEMA IF NOT EXISTS app_{id}`, `mkdir ./data/apps/{id}/`
-3. Import `models.py` → `create_all` for this app's schema
-4. Import `events.py` → register schemas with EventBus Schema Registry
-5. Import `metrics.py` → register `MetricsSchema` with hydration layer
-6. Build Subscription Map (`topic → [app_ids]`) from `event` triggers
-7. Register all triggers; register MCP tools for `mcp_enabled` apps
-8. On trigger fire → `safe_execute(app_id, ctx)`
+`proto/belgrade_os.proto` is the **single source of truth** for all message shapes. No gRPC — proto is used only for binary serialization over Redis.
 
-Apps are **lazy-loaded** — `main.py` imported only when a trigger fires.
+Generated outputs (gitignored, rebuilt with `make proto`):
+- `gateway/gen/belgrade_os.pb.go`
+- `runner/gen/belgrade_os_pb2.py`
+- `inference/gen/belgrade_os_pb2.py`
+- `bridge/` — built by `cargo build` via `bridge/build.rs` (prost)
 
-### Execution: `safe_execute` (`core/executor.py`)
+Key message types: `Task`, `ToolCall`, `ToolResult`, `ThoughtEvent`, `Tool`, `AppToolsRegistration`, `ToolListResponse`, `WorkerLease`. All carry `trace_id` for distributed tracing.
 
-- `asyncio.Semaphore(3)` — max concurrent executions
-- Error tiers: Logic (catch+log), Transient (retry+backoff), Resource (system halt)
-- Circuit breaker: 3 failures/10min → app disabled → `system.circuit_broken` emitted
-- `finally` always rolls back `ctx.db` and closes handles
+### Gateway (`gateway/`)
 
-### Context API (`ctx: AppContext`)
+- `POST /v1/tasks` — validates `Cf-Access-Jwt-Assertion` (Cloudflare Zero Trust RS256 JWT), extracts `user_id` from `sub` claim, builds `Task` proto, XADDs to `tasks:inbound`
+- When `stream: true` in request body: upgrades response to `text/event-stream`, subscribes to `sse:{task_id}` Pub/Sub, proxies `ThoughtEvent` payloads as SSE
+- JWKS fetched from `https://${CF_TEAM_DOMAIN}.cloudflareaccess.com/cdn-cgi/access/certs`, cached 24 h
 
-| Property | Access | Description |
-|---|---|---|
-| `ctx.user` | read-only | Stable identity from `identity.json` (name, email, timezone) |
-| `ctx.metrics` | read-only | App's typed view of `shared.config` JSONB, validated against app's own `MetricsSchema` |
-| `ctx.db` | read/write | `AsyncSession` scoped to `app_{id}` schema |
-| `ctx.io` | read/write | Adapter-wrapped file ops, base path pre-resolved |
-| `ctx.emit(topic, data)` | write | EventBus publish. Validated at emit (fail-fast). Topics: `{origin}.{event_type}` |
-| `ctx.notify` | write | ntfy.sh push to device |
-| `ctx.meta` | read-only | `app_id`, timestamp, secrets |
+### Environment variables
 
-### User state — three tiers
+| Service | Key | Default | Notes |
+|---|---|---|---|
+| gateway | `PORT` | `8080` | |
+| gateway | `REDIS_URL` | `redis://localhost:6379` | |
+| gateway | `CF_TEAM_DOMAIN` | — | Required in production |
+| gateway | `CF_AUDIENCE` | — | Required in production |
 
-| Tier | Storage | Access |
-|---|---|---|
-| Identity | `identity.json` | `ctx.user` — immutable (name, height, DOB, timezone) |
-| Metrics | `shared.config` JSONB + `shared.current_metrics` view | `ctx.metrics` — mutable (weight, goals, preferences) |
-| App state | `app_{id}.*` tables | `ctx.db` — private per-app data |
+### Integration tests
 
-Only apps with `"config": { "shared_write": true }` in their manifest can write to `shared.config`.
+Tests that touch Redis require it to be running:
+```bash
+docker-compose up -d redis
+```
 
-### EventBus — Schema Registry
-
-Platform is generic. Apps own their schemas in `events.py`. Bootstrapper registers them; platform calls `model.model_validate(data)` without knowing field names.
-
-Validation tiers: `system.*` always strict → registered schemas always validated → unregistered topics permissive (dict + warning).
-
-Validated Pydantic objects (never raw dicts) are dispatched to subscribers. When an app is deleted, its schemas vanish automatically.
-
-### Shared infrastructure
-
-- `shared/database.py` — SQLModel engine (`localhost:5432`, db `belgrade_os`, user `laurent`)
-- `core/config.py` — pydantic_settings from `.env`. Required: `DB_PASSWORD`. Optional: `NTFY_TOPIC`, `GEMINI_API_KEY`, `CLOUDFLARE_TOKEN`
-- `shared/` — Google Drive, Gmail, Obsidian REST connectors. Used by adapters only, never imported directly by apps.
+Redis-dependent tests skip gracefully (`t.Skipf`) when Redis is unreachable. Auth and config tests have no external deps.
 
 ## Deployment
 
-- **Host:** Raspberry Pi 4 (8GB), FastAPI bare-metal; everything else Docker
-- **Storage:** `/mnt/storage`. Family data at `/mnt/storage/shares/family/obsidian`
+- **Host:** Raspberry Pi 4 (8GB); services run as systemd units or Docker containers
 - **Access:** Cloudflare Tunnel (`beg-os.fyi`) + Zero Trust email OTP
-- **Obsidian sync:** CouchDB (Docker) + LiveSync. Obsidian is the edit interface for `shared.config` via Observer sync loop
-- **Admin Agent:** Gemini 1.5 Pro in Docker. Volume mounts: `/apps` RW, `core/` RO, family data not mounted. Subscribes to `system.*` via MCP. Phase 1: read logs + propose fixes via ntfy.sh + apply on human approval. Phase 2 (later): autonomous writes per-scope.
-- **Docker access:** via Tecnativa socket-proxy (not raw `docker.sock`). `CONTAINERS=1`, `POST=1`, `NETWORKS=0`, `VOLUMES=0`. Only manages containers labelled `beg-os.managed=true`.
-- **MCP:** FastMCP at `/mcp/sse`, `X-Cloudflare-Access-Identity` auth, tools auto-generated from manifests
-- **Backup:** system cron (`0 3 * * 0`) at `/mnt/storage/backups/backup.sh` — pg_dump both DBs + rsync Obsidian vault, 4-week retention. Runs outside the platform.
+- **Storage:** `/mnt/storage`; family data at `/mnt/storage/shares/family/obsidian`
+- **Backup:** weekly `pg_dump` + rsync at `/mnt/storage/backups/backup.sh`
 - **Monitoring:** Dozzle (JSON logs)
-- **Cloud:** Supabase for metadata/AI logs only — family data never leaves the Pi
-- `/data/postgres` — git-ignored, never commit
+- `/data/postgres`, `/data/redis` — git-ignored, never commit
