@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import AsyncIterator
+from typing import Optional
 from anthropic import AsyncAnthropic
 from .base import InferenceProvider, TextChunk, ToolUse, StreamDone
 
@@ -14,7 +15,7 @@ class AnthropicProvider(InferenceProvider):
     async def generate(
         self,
         messages: list,
-        tools: list = None,
+        tools: Optional[list] = None,
     ) -> AsyncIterator:
         kwargs = dict(
             model=self._model,

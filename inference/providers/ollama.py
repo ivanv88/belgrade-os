@@ -1,8 +1,8 @@
 from __future__ import annotations
 
-import inspect
 import json
 from collections.abc import AsyncIterator
+from typing import Optional
 from openai import AsyncOpenAI
 from .base import InferenceProvider, TextChunk, ToolUse, StreamDone
 
@@ -16,7 +16,7 @@ class OllamaProvider(InferenceProvider):
     async def generate(
         self,
         messages: list,
-        tools: list = None,
+        tools: Optional[list] = None,
     ) -> AsyncIterator:
         kwargs = dict(
             model=self._model,
@@ -28,10 +28,8 @@ class OllamaProvider(InferenceProvider):
             kwargs["tools"] = tools
 
         tool_calls = []
-        result = self._client.chat.completions.create(**kwargs)
-        if inspect.iscoroutine(result):
-            result = await result
-        async for chunk in result:
+        stream = await self._client.chat.completions.create(**kwargs)
+        async for chunk in stream:
             choice = chunk.choices[0]
             delta = choice.delta
             if delta.content:

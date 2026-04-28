@@ -1,8 +1,8 @@
 from __future__ import annotations
 
-import inspect
 import uuid
 from collections.abc import AsyncIterator
+from typing import Optional
 import google.generativeai as genai
 from .base import InferenceProvider, TextChunk, ToolUse, StreamDone
 
@@ -28,7 +28,7 @@ class GeminiProvider(InferenceProvider):
     async def generate(
         self,
         messages: list,
-        tools: list = None,
+        tools: Optional[list] = None,
     ) -> AsyncIterator:
         gemini_msgs = _to_gemini_messages(messages)
         kwargs = dict(stream=True)
@@ -36,10 +36,7 @@ class GeminiProvider(InferenceProvider):
             kwargs["tools"] = tools
 
         tool_calls = []
-        result = self._model.generate_content_async(gemini_msgs, **kwargs)
-        if inspect.iscoroutine(result):
-            result = await result
-        async for chunk in result:
+        async for chunk in await self._model.generate_content_async(gemini_msgs, **kwargs):
             if chunk.text:
                 yield TextChunk(content=chunk.text)
             for candidate in getattr(chunk, "candidates", []):

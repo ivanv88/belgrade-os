@@ -121,7 +121,7 @@ async def test_gemini_yields_text_chunks():
     with patch("providers.gemini.genai") as mock_genai:
         mock_model = MagicMock()
         mock_genai.GenerativeModel.return_value = mock_model
-        mock_model.generate_content_async.return_value = fake_stream()
+        mock_model.generate_content_async = AsyncMock(return_value=fake_stream())
 
         provider = GeminiProvider(api_key="gkey", model="gemini-1.5-pro", max_tokens=1024)
         events = []
@@ -130,6 +130,7 @@ async def test_gemini_yields_text_chunks():
 
     text_events = [e for e in events if isinstance(e, TextChunk)]
     assert [e.content for e in text_events] == ["Hello", " world"]
+    assert events
     done = events[-1]
     assert isinstance(done, StreamDone)
     assert done.stop_reason == "end_turn"
@@ -160,13 +161,14 @@ async def test_gemini_maps_function_call_to_tool_use():
     with patch("providers.gemini.genai") as mock_genai:
         mock_model = MagicMock()
         mock_genai.GenerativeModel.return_value = mock_model
-        mock_model.generate_content_async.return_value = fake_stream()
+        mock_model.generate_content_async = AsyncMock(return_value=fake_stream())
 
         provider = GeminiProvider(api_key="gkey", model="m", max_tokens=100)
         events = []
         async for evt in provider.generate([{"role": "user", "content": "hi"}]):
             events.append(evt)
 
+    assert events
     done = events[-1]
     assert isinstance(done, StreamDone)
     assert done.stop_reason == "tool_use"
@@ -197,7 +199,7 @@ async def test_ollama_yields_text_chunks():
     with patch("providers.ollama.AsyncOpenAI") as Mock:
         mock_client = MagicMock()
         Mock.return_value = mock_client
-        mock_client.chat.completions.create.return_value = fake_stream()
+        mock_client.chat.completions.create = AsyncMock(return_value=fake_stream())
 
         provider = OllamaProvider(base_url="http://localhost:11434", model="qwen2.5-coder", max_tokens=512)
         events = []
@@ -206,6 +208,7 @@ async def test_ollama_yields_text_chunks():
 
     text_events = [e for e in events if isinstance(e, TextChunk)]
     assert [e.content for e in text_events] == ["Hello", " world"]
+    assert events
     done = events[-1]
     assert isinstance(done, StreamDone)
     assert done.stop_reason == "end_turn"
