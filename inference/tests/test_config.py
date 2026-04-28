@@ -4,27 +4,57 @@ from config import Config
 
 
 def test_defaults():
-    c = Config(anthropic_api_key="test-key")
+    c = Config(provider="anthropic", model="claude-opus-4-7", anthropic_api_key="k")
     assert c.redis_url == "redis://localhost:6379"
-    assert c.model == "claude-opus-4-7"
     assert c.max_tokens == 8192
+    assert c.ollama_base_url == "http://localhost:11434"
 
 
-def test_from_env(monkeypatch):
-    monkeypatch.setenv("ANTHROPIC_API_KEY", "env-key")
-    monkeypatch.setenv("MODEL", "claude-haiku-4-5-20251001")
-    monkeypatch.setenv("MAX_TOKENS", "4096")
-    c = Config()
-    assert c.anthropic_api_key == "env-key"
-    assert c.model == "claude-haiku-4-5-20251001"
-    assert c.max_tokens == 4096
+def test_provider_required(monkeypatch):
+    monkeypatch.delenv("PROVIDER", raising=False)
+    with pytest.raises(Exception):
+        Config(model="some-model")
+
+
+def test_model_required(monkeypatch):
+    monkeypatch.delenv("MODEL", raising=False)
+    with pytest.raises(Exception):
+        Config(provider="gemini")
+
+
+def test_anthropic_requires_api_key():
+    with pytest.raises(ValueError, match="ANTHROPIC_API_KEY"):
+        Config(provider="anthropic", model="claude-opus-4-7")
+
+
+def test_gemini_requires_api_key():
+    with pytest.raises(ValueError, match="GOOGLE_API_KEY"):
+        Config(provider="gemini", model="gemini-1.5-pro")
+
+
+def test_ollama_needs_no_key():
+    c = Config(provider="ollama", model="qwen2.5-coder")
+    assert c.anthropic_api_key is None
+    assert c.google_api_key is None
 
 
 def test_effective_consumer_id_hostname():
-    c = Config(anthropic_api_key="k", consumer_id="")
+    c = Config(provider="ollama", model="m", consumer_id="")
     assert c.effective_consumer_id == socket.gethostname()
 
 
 def test_effective_consumer_id_explicit():
-    c = Config(anthropic_api_key="k", consumer_id="worker-1")
+    c = Config(provider="ollama", model="m", consumer_id="worker-1")
     assert c.effective_consumer_id == "worker-1"
+
+
+def test_from_env(monkeypatch):
+    monkeypatch.setenv("PROVIDER", "gemini")
+    monkeypatch.setenv("MODEL", "gemini-1.5-flash")
+    monkeypatch.setenv("GOOGLE_API_KEY", "gkey")
+    monkeypatch.setenv("MAX_TOKENS", "4096")
+    c = Config()
+    assert c.provider == "gemini"
+    assert c.model == "gemini-1.5-flash"
+    assert c.google_api_key == "gkey"
+    assert c.max_tokens == 4096
