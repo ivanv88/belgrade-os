@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/golang-jwt/jwt/v5"
+	"golang.org/x/sync/singleflight"
 )
 
 var jwksHTTPClient = &http.Client{Timeout: 10 * time.Second}
@@ -27,8 +28,10 @@ type jwksResponse struct {
 
 // JWKSCache caches Cloudflare RS256 public keys by kid with a 24 h TTL.
 // On unknown kid it re-fetches once to handle key rotation.
+// singleflight.Group ensures concurrent callers share a single in-flight refresh.
 type JWKSCache struct {
 	mu        sync.RWMutex
+	sf        singleflight.Group
 	keys      map[string]*rsa.PublicKey
 	fetchedAt time.Time
 	ttl       time.Duration
@@ -52,7 +55,9 @@ func (c *JWKSCache) GetKey(kid string) (*rsa.PublicKey, error) {
 	if ok && !expired {
 		return key, nil
 	}
-	if err := c.refresh(); err != nil {
+	if _, err, _ := c.sf.Do("refresh", func() (any, error) {
+		return nil, c.refresh()
+	}); err != nil {
 		return nil, err
 	}
 
