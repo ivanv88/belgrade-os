@@ -1,3 +1,5 @@
 grpcio==1.64.1
-protobuf==4.25.3
+protobuf>=5.26.1
 redis==5.0.4
+anthropic>=0.39.0
+pydantic-settings>=2.0
