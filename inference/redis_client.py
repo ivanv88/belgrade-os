@@ -41,9 +41,9 @@ class RedisClient:
         message_id = msg_id.decode() if isinstance(msg_id, bytes) else msg_id
         return message_id, fields[b"data"]
 
-    async def ack_task(self, message_id: str) -> None:
+    async def ack_task(self, consumer_group: str, message_id: str) -> None:
         """XACK tasks:inbound."""
-        await self._redis.xack(INBOUND_STREAM, "inference", message_id)
+        await self._redis.xack(INBOUND_STREAM, consumer_group, message_id)
 
     async def publish_thought(self, task_id: str, proto_bytes: bytes) -> None:
         """PUBLISH sse:{task_id} proto_bytes."""
@@ -84,9 +84,9 @@ class RedisClient:
             await self._redis.xack(TOOL_RESULTS_STREAM, consumer_group, message_id)
         return None
 
-    async def ack_tool_result(self, message_id: str) -> None:
+    async def ack_tool_result(self, consumer_group: str, message_id: str) -> None:
         """XACK tasks:tool_results."""
-        await self._redis.xack(TOOL_RESULTS_STREAM, "inference", message_id)
+        await self._redis.xack(TOOL_RESULTS_STREAM, consumer_group, message_id)
 
     async def ensure_consumer_groups(self) -> None:
         """Create consumer groups for tasks:inbound and tasks:tool_results.

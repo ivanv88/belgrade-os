@@ -67,9 +67,9 @@ async def test_ack_task_calls_xack():
     client, mock_redis = _make_client()
     mock_redis.xack = AsyncMock()
 
-    await client.ack_task("1234-0")
+    await client.ack_task("g", "1234-0")
 
-    mock_redis.xack.assert_awaited_once_with(INBOUND_STREAM, "inference", "1234-0")
+    mock_redis.xack.assert_awaited_once_with(INBOUND_STREAM, "g", "1234-0")
 
 
 # ---------------------------------------------------------------------------
@@ -84,6 +84,19 @@ async def test_publish_thought_calls_publish():
     await client.publish_thought("task-abc", proto)
 
     mock_redis.publish.assert_awaited_once_with("sse:task-abc", proto)
+
+
+# ---------------------------------------------------------------------------
+# ack_tool_result
+# ---------------------------------------------------------------------------
+
+async def test_ack_tool_result_calls_xack():
+    client, mock_redis = _make_client()
+    mock_redis.xack = AsyncMock()
+
+    await client.ack_tool_result("g", "5678-0")
+
+    mock_redis.xack.assert_awaited_once_with(TOOL_RESULTS_STREAM, "g", "5678-0")
 
 
 # ---------------------------------------------------------------------------
