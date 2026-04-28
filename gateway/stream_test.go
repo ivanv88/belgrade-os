@@ -36,8 +36,10 @@ func TestStreamSSEWritesEventsAndStopsOnDone(t *testing.T) {
 	defer cancel()
 	req := httptest.NewRequest(http.MethodPost, "/v1/tasks", nil).WithContext(ctx)
 
-	evtCh := c.SubscribeSSE(ctx, taskID)
-	time.Sleep(50 * time.Millisecond) // wait for Redis SUBSCRIBE ack
+	evtCh, err := c.SubscribeSSE(ctx, taskID)
+	if err != nil {
+		t.Fatalf("subscribe: %v", err)
+	}
 
 	done := make(chan struct{})
 	go func() {
@@ -80,8 +82,10 @@ func TestStreamSSECancelContextCleansUp(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	req := httptest.NewRequest(http.MethodPost, "/", nil).WithContext(ctx)
 
-	evtCh := c.SubscribeSSE(ctx, taskID)
-	time.Sleep(50 * time.Millisecond) // wait for Redis SUBSCRIBE ack
+	evtCh, err := c.SubscribeSSE(ctx, taskID)
+	if err != nil {
+		t.Fatalf("subscribe: %v", err)
+	}
 
 	done := make(chan struct{})
 	go func() {

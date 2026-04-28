@@ -40,10 +40,17 @@ func (c *RedisClient) PublishTask(ctx context.Context, task *belgrade.Task) erro
 }
 
 // SubscribeSSE subscribes to sse:{taskID} and emits decoded ThoughtEvents.
-// The returned channel is closed when ctx is cancelled or the Pub/Sub connection drops.
-func (c *RedisClient) SubscribeSSE(ctx context.Context, taskID string) <-chan *belgrade.ThoughtEvent {
+// It blocks until Redis acknowledges the SUBSCRIBE command, so the caller
+// can safely publish without a race window. The returned channel is closed
+// when ctx is cancelled or the Pub/Sub connection drops.
+func (c *RedisClient) SubscribeSSE(ctx context.Context, taskID string) (<-chan *belgrade.ThoughtEvent, error) {
 	ch := make(chan *belgrade.ThoughtEvent, 16)
 	pubsub := c.rdb.Subscribe(ctx, fmt.Sprintf("sse:%s", taskID))
+
+	if _, err := pubsub.Receive(ctx); err != nil {
+		pubsub.Close()
+		return nil, fmt.Errorf("subscribe sse:%s: %w", taskID, err)
+	}
 
 	go func() {
 		defer close(ch)
@@ -69,5 +76,5 @@ func (c *RedisClient) SubscribeSSE(ctx context.Context, taskID string) <-chan *b
 			}
 		}
 	}()
-	return ch
+	return ch, nil
 }

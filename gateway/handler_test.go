@@ -63,11 +63,17 @@ func TestCreateTaskMissingAuthHeader(t *testing.T) {
 }
 
 func TestCreateTaskMissingPrompt(t *testing.T) {
-	cache := newTestCache(t, "http://localhost:0")
-	h := NewHandler(cache, nil, "aud")
+	key := generateTestKey(t)
+	kid := "handler-kid-prompt"
+	srv := serveJWKS(t, &key.PublicKey, kid)
+	defer srv.Close()
+
+	cache := newTestCache(t, srv.URL)
+	h := NewHandler(cache, nil, "test-aud")
+	tokenStr := signToken(t, key, kid, "user-prompt-test", "test-aud", time.Now().Add(time.Hour))
 
 	req := httptest.NewRequest(http.MethodPost, "/v1/tasks", strings.NewReader(`{}`))
-	req.Header.Set("Cf-Access-Jwt-Assertion", "anything")
+	req.Header.Set("Cf-Access-Jwt-Assertion", tokenStr)
 	w := httptest.NewRecorder()
 	h.CreateTask(w, req)
 

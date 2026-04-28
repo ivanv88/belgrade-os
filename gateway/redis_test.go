@@ -68,9 +68,10 @@ func TestSubscribeSSEReceivesEvent(t *testing.T) {
 	defer cancel()
 
 	taskID := "sub-test-task-redis"
-	evtCh := c.SubscribeSSE(ctx, taskID)
-
-	time.Sleep(50 * time.Millisecond)
+	evtCh, err := c.SubscribeSSE(ctx, taskID)
+	if err != nil {
+		t.Fatalf("subscribe: %v", err)
+	}
 
 	sent := &belgrade.ThoughtEvent{
 		TaskId:  taskID,

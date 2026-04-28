@@ -38,6 +38,12 @@ func (h *Handler) CreateTask(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	claims, err := ValidateToken(tokenStr, h.auth, h.audience)
+	if err != nil {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
+
 	r.Body = http.MaxBytesReader(w, r.Body, 64*1024)
 	var req taskRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -47,12 +53,6 @@ func (h *Handler) CreateTask(w http.ResponseWriter, r *http.Request) {
 
 	if req.Prompt == "" {
 		http.Error(w, "prompt is required", http.StatusBadRequest)
-		return
-	}
-
-	claims, err := ValidateToken(tokenStr, h.auth, h.audience)
-	if err != nil {
-		http.Error(w, "unauthorized", http.StatusUnauthorized)
 		return
 	}
 
@@ -70,7 +70,11 @@ func (h *Handler) CreateTask(w http.ResponseWriter, r *http.Request) {
 	// Subscribe before publish so no ThoughtEvents are missed on the streaming path.
 	var evtCh <-chan *belgrade.ThoughtEvent
 	if req.Stream {
-		evtCh = h.redis.SubscribeSSE(r.Context(), taskID)
+		evtCh, err = h.redis.SubscribeSSE(r.Context(), taskID)
+		if err != nil {
+			http.Error(w, "failed to set up stream", http.StatusInternalServerError)
+			return
+		}
 	}
 
 	if err := h.redis.PublishTask(r.Context(), task); err != nil {
