@@ -15,9 +15,10 @@ type sseData struct {
 	TraceID string `json:"trace_id"`
 }
 
-// streamSSE subscribes to sse:{taskID} and forwards ThoughtEvents as SSE.
+// streamSSE forwards ThoughtEvents from evtCh as SSE.
+// evtCh must be subscribed before the task is published to avoid losing early events.
 // Returns when a DONE/ERROR event is received or ctx is cancelled.
-func streamSSE(w http.ResponseWriter, r *http.Request, rc *RedisClient, taskID string) {
+func streamSSE(w http.ResponseWriter, r *http.Request, evtCh <-chan *belgrade.ThoughtEvent) {
 	flusher, ok := w.(http.Flusher)
 	if !ok {
 		http.Error(w, "streaming not supported", http.StatusInternalServerError)
@@ -29,7 +30,6 @@ func streamSSE(w http.ResponseWriter, r *http.Request, rc *RedisClient, taskID s
 	w.Header().Set("Connection", "keep-alive")
 	w.WriteHeader(http.StatusOK)
 
-	evtCh := rc.SubscribeSSE(r.Context(), taskID)
 	for evt := range evtCh {
 		payload, _ := json.Marshal(sseData{
 			Type:    int32(evt.Type),

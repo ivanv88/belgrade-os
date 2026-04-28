@@ -32,15 +32,16 @@ func NewHandler(auth *JWKSCache, redis *RedisClient, audience string) *Handler {
 }
 
 func (h *Handler) CreateTask(w http.ResponseWriter, r *http.Request) {
-	var req taskRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, "invalid JSON", http.StatusBadRequest)
-		return
-	}
-
 	tokenStr := r.Header.Get("Cf-Access-Jwt-Assertion")
 	if tokenStr == "" {
 		http.Error(w, "missing Cf-Access-Jwt-Assertion header", http.StatusUnauthorized)
+		return
+	}
+
+	r.Body = http.MaxBytesReader(w, r.Body, 64*1024)
+	var req taskRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "invalid JSON", http.StatusBadRequest)
 		return
 	}
 
@@ -66,13 +67,19 @@ func (h *Handler) CreateTask(w http.ResponseWriter, r *http.Request) {
 		TraceId:     traceID,
 	}
 
+	// Subscribe before publish so no ThoughtEvents are missed on the streaming path.
+	var evtCh <-chan *belgrade.ThoughtEvent
+	if req.Stream {
+		evtCh = h.redis.SubscribeSSE(r.Context(), taskID)
+	}
+
 	if err := h.redis.PublishTask(r.Context(), task); err != nil {
 		http.Error(w, "failed to queue task", http.StatusInternalServerError)
 		return
 	}
 
 	if req.Stream {
-		streamSSE(w, r, h.redis, taskID)
+		streamSSE(w, r, evtCh)
 		return
 	}
 

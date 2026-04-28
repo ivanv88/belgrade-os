@@ -13,6 +13,8 @@ import (
 	"github.com/golang-jwt/jwt/v5"
 )
 
+var jwksHTTPClient = &http.Client{Timeout: 10 * time.Second}
+
 type jwk struct {
 	Kid string `json:"kid"`
 	N   string `json:"n"`
@@ -64,7 +66,7 @@ func (c *JWKSCache) GetKey(kid string) (*rsa.PublicKey, error) {
 }
 
 func (c *JWKSCache) refresh() error {
-	resp, err := http.Get(c.jwksURL) //nolint:gosec
+	resp, err := jwksHTTPClient.Get(c.jwksURL) //nolint:gosec
 	if err != nil {
 		return fmt.Errorf("jwks fetch: %w", err)
 	}

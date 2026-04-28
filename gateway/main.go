@@ -1,9 +1,11 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"log"
 	"net/http"
+	"time"
 )
 
 func main() {
@@ -15,6 +17,11 @@ func main() {
 	if err != nil {
 		log.Fatalf("redis connect: %v", err)
 	}
+	pingCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if err := rClient.Ping(pingCtx); err != nil {
+		log.Fatalf("redis ping: %v", err)
+	}
 
 	h := NewHandler(cache, rClient, cfg.CFAudience)
 
@@ -23,5 +30,10 @@ func main() {
 
 	addr := fmt.Sprintf(":%s", cfg.Port)
 	log.Printf("gateway listening on %s", addr)
-	log.Fatal(http.ListenAndServe(addr, mux))
+	srv := &http.Server{
+		Addr:              addr,
+		Handler:           mux,
+		ReadHeaderTimeout: 10 * time.Second,
+	}
+	log.Fatal(srv.ListenAndServe())
 }

@@ -36,13 +36,14 @@ func TestStreamSSEWritesEventsAndStopsOnDone(t *testing.T) {
 	defer cancel()
 	req := httptest.NewRequest(http.MethodPost, "/v1/tasks", nil).WithContext(ctx)
 
+	evtCh := c.SubscribeSSE(ctx, taskID)
+	time.Sleep(50 * time.Millisecond) // wait for Redis SUBSCRIBE ack
+
 	done := make(chan struct{})
 	go func() {
-		streamSSE(rec, req, c, taskID)
+		streamSSE(rec, req, evtCh)
 		close(done)
 	}()
-
-	time.Sleep(50 * time.Millisecond)
 
 	for _, evt := range []*belgrade.ThoughtEvent{
 		{TaskId: taskID, Content: "first chunk", Type: belgrade.ThoughtEventType_RESPONSE_CHUNK},
@@ -79,13 +80,15 @@ func TestStreamSSECancelContextCleansUp(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	req := httptest.NewRequest(http.MethodPost, "/", nil).WithContext(ctx)
 
+	evtCh := c.SubscribeSSE(ctx, taskID)
+	time.Sleep(50 * time.Millisecond) // wait for Redis SUBSCRIBE ack
+
 	done := make(chan struct{})
 	go func() {
-		streamSSE(rec, req, c, taskID)
+		streamSSE(rec, req, evtCh)
 		close(done)
 	}()
 
-	time.Sleep(50 * time.Millisecond)
 	cancel()
 
 	select {

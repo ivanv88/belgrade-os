@@ -22,6 +22,10 @@ func NewRedisClient(url string) (*RedisClient, error) {
 	return &RedisClient{rdb: goredis.NewClient(opts)}, nil
 }
 
+func (c *RedisClient) Ping(ctx context.Context) error {
+	return c.rdb.Ping(ctx).Err()
+}
+
 func (c *RedisClient) PublishTask(ctx context.Context, task *belgrade.Task) error {
 	data, err := proto.Marshal(task)
 	if err != nil {
