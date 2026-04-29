@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import uuid
 from collections.abc import AsyncIterator
-from typing import Optional
+from typing import Optional, Union
 import google.generativeai as genai
 from .base import InferenceProvider, TextChunk, ToolUse, StreamDone
 
@@ -29,7 +29,7 @@ class GeminiProvider(InferenceProvider):
         self,
         messages: list,
         tools: Optional[list] = None,
-    ) -> AsyncIterator:
+    ) -> AsyncIterator[Union[TextChunk, StreamDone]]:
         gemini_msgs = _to_gemini_messages(messages)
         kwargs = dict(stream=True)
         if tools:

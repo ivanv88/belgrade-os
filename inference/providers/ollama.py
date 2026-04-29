@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 from collections.abc import AsyncIterator
-from typing import Optional
+from typing import Optional, Union
 from openai import AsyncOpenAI
 from .base import InferenceProvider, TextChunk, ToolUse, StreamDone
 
@@ -17,7 +17,7 @@ class OllamaProvider(InferenceProvider):
         self,
         messages: list,
         tools: Optional[list] = None,
-    ) -> AsyncIterator:
+    ) -> AsyncIterator[Union[TextChunk, StreamDone]]:
         kwargs = dict(
             model=self._model,
             messages=messages,

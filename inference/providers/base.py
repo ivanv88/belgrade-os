@@ -3,7 +3,7 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
-from typing import Optional
+from typing import Optional, Union
 
 
 @dataclass
@@ -30,6 +30,6 @@ class InferenceProvider(ABC):
         self,
         messages: list,
         tools: Optional[list] = None,
-    ) -> AsyncIterator:
+    ) -> AsyncIterator[Union[TextChunk, StreamDone]]:
         """Yield TextChunk for each text delta, then a single StreamDone."""
         yield  # pragma: no cover

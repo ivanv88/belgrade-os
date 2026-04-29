@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import AsyncIterator
-from typing import Optional
+from typing import Optional, Union
 from anthropic import AsyncAnthropic
 from .base import InferenceProvider, TextChunk, ToolUse, StreamDone
 
@@ -16,7 +16,7 @@ class AnthropicProvider(InferenceProvider):
         self,
         messages: list,
         tools: Optional[list] = None,
-    ) -> AsyncIterator:
+    ) -> AsyncIterator[Union[TextChunk, StreamDone]]:
         kwargs = dict(
             model=self._model,
             max_tokens=self._max_tokens,
