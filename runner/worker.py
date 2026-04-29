@@ -25,9 +25,9 @@ async def process_tool_call(
     )
     await redis.set_lease(worker_id, lease.SerializeToString(), lease_ttl_s)
     try:
-        start_ms = int(time.time() * 1000)
+        start_ns = time.monotonic_ns()
         result = await bridge.execute(call)
-        result.duration_ms = int(time.time() * 1000) - start_ms
+        result.duration_ms = (time.monotonic_ns() - start_ns) // 1_000_000
         await redis.write_tool_result(call.task_id, result.SerializeToString())
     finally:
         await redis.delete_lease(worker_id)

@@ -32,10 +32,12 @@ async def test_sets_lease_with_correct_fields():
     await process_tool_call(_make_call(), mock_redis, mock_bridge, worker_id="w1", lease_ttl_s=60)
 
     mock_redis.set_lease.assert_awaited_once()
+    key_arg = mock_redis.set_lease.await_args.args[0]
     lease_bytes = mock_redis.set_lease.await_args.args[1]
     ttl = mock_redis.set_lease.await_args.args[2]
     lease = belgrade_os_pb2.WorkerLease()
     lease.ParseFromString(lease_bytes)
+    assert key_arg == "w1"
     assert lease.worker_id == "w1"
     assert lease.task_id == "t1"
     assert lease.call_id == "c1"
@@ -100,3 +102,15 @@ async def test_result_written_before_lease_deleted():
     await process_tool_call(_make_call(), mock_redis, mock_bridge, worker_id="w1", lease_ttl_s=60)
 
     assert call_order == ["set", "write", "delete"]
+
+
+async def test_deletes_lease_on_bridge_exception():
+    mock_redis = AsyncMock()
+    mock_bridge = AsyncMock()
+    mock_bridge.execute.side_effect = RuntimeError("unexpected")
+
+    with pytest.raises(RuntimeError):
+        await process_tool_call(_make_call(), mock_redis, mock_bridge, worker_id="w1", lease_ttl_s=60)
+
+    mock_redis.delete_lease.assert_awaited_once_with("w1")
+    mock_redis.write_tool_result.assert_not_awaited()
