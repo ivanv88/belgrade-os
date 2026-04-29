@@ -7,7 +7,7 @@ use crate::{config::Config, registry::{ToolRegistration, ToolRegistry}};
 pub struct AppState {
     pub registry: Arc<ToolRegistry>,
     pub config: Arc<Config>,
-    pub http: reqwest::Client,
+    // http field removed — re-added in Task 4 with handle_execute
 }
 
 #[derive(Deserialize)]
@@ -60,7 +60,15 @@ pub struct NotificationsProviderResponse {
 async fn handle_register(
     State(state): State<AppState>,
     Json(req): Json<RegisterRequest>,
-) -> StatusCode {
+) -> Result<StatusCode, (StatusCode, String)> {
+    for t in &req.tools {
+        if !t.name.starts_with(&format!("{}:", req.app_id)) {
+            return Err((
+                StatusCode::BAD_REQUEST,
+                format!("tool name {:?} must be namespaced as '{}:<name>'", t.name, req.app_id),
+            ));
+        }
+    }
     let registrations: Vec<ToolRegistration> = req
         .tools
         .into_iter()
@@ -71,7 +79,7 @@ async fn handle_register(
         })
         .collect();
     state.registry.register(&req.app_id, &req.callback_url, &registrations);
-    StatusCode::NO_CONTENT
+    Ok(StatusCode::NO_CONTENT)
 }
 
 async fn handle_tools(
@@ -93,9 +101,15 @@ async fn handle_tools(
 
 async fn handle_execute(
     State(_state): State<AppState>,
-    Json(_req): Json<ExecuteRequest>,
+    Json(req): Json<ExecuteRequest>,
 ) -> Json<ExecuteResponse> {
-    todo!()
+    Json(ExecuteResponse {
+        call_id: req.call_id,
+        task_id: req.task_id,
+        success: false,
+        output_json: String::new(),
+        error: "not implemented".to_string(),
+    })
 }
 
 async fn handle_notifications_provider(
@@ -109,7 +123,7 @@ async fn handle_notifications_provider(
 }
 
 pub fn create_router(registry: Arc<ToolRegistry>, config: Arc<Config>) -> Router {
-    let state = AppState { registry, config, http: reqwest::Client::new() };
+    let state = AppState { registry, config };
     Router::new()
         .route("/v1/register", post(handle_register))
         .route("/v1/tools", get(handle_tools))
@@ -225,5 +239,29 @@ mod tests {
         assert_eq!(json["provider"], "ntfy");
         assert_eq!(json["base_url"], "https://ntfy.sh");
         assert_eq!(json["topic"], "test-topic");
+    }
+
+    #[tokio::test]
+    async fn test_register_bad_tool_name_returns_400() {
+        let registry = Arc::new(ToolRegistry::new());
+        let app = create_router(Arc::clone(&registry), make_config());
+
+        let body = serde_json::json!({
+            "app_id": "shopping",
+            "callback_url": "http://app:8000",
+            "tools": [{"name": "badname", "description": "bad", "input_schema_json": "{}"}]
+        });
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/v1/register")
+                    .header("content-type", "application/json")
+                    .body(Body::from(body.to_string()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
     }
 }
