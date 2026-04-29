@@ -3,6 +3,7 @@ pub mod belgrade_os {
 }
 
 pub mod config;
+pub mod registry;
 
 #[cfg(test)]
 mod tests {
