@@ -31,7 +31,10 @@ class RedisClient:
             return None
         msg_id, fields = messages[0]
         message_id = msg_id.decode() if isinstance(msg_id, bytes) else msg_id
-        return message_id, fields[b"data"]
+        payload = fields.get(b"data")
+        if payload is None:
+            raise ValueError(f"Stream message {message_id} missing required 'data' field. Got keys: {list(fields)!r}")
+        return message_id, payload
 
     async def ack_tool_call(self, consumer_group: str, message_id: str) -> None:
         """XACK tasks:tool_calls."""
@@ -50,6 +53,8 @@ class RedisClient:
 
     async def set_lease(self, worker_id: str, proto_bytes: bytes, ttl_s: int) -> None:
         """SET lease:{worker_id} to serialised WorkerLease proto with TTL."""
+        if ttl_s <= 0:
+            raise ValueError(f"ttl_s must be a positive integer, got {ttl_s!r}")
         await self._redis.set(f"{LEASE_KEY_PREFIX}:{worker_id}", proto_bytes, ex=ttl_s)
 
     async def delete_lease(self, worker_id: str) -> None:

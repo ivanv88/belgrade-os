@@ -77,3 +77,18 @@ async def test_ensure_consumer_group_ignores_busygroup():
         side_effect=redis.exceptions.ResponseError("BUSYGROUP Consumer Group name already exists")
     )
     await client.ensure_consumer_group()  # must not raise
+
+
+async def test_read_tool_call_raises_on_missing_data_field():
+    client, mock_redis = _make_client()
+    mock_redis.xreadgroup = AsyncMock(return_value=[
+        (b"tasks:tool_calls", [(b"1-0", {b"other": b"stuff"})])
+    ])
+    with pytest.raises(ValueError, match="missing required 'data' field"):
+        await client.read_tool_call("g", "w1")
+
+
+async def test_set_lease_rejects_non_positive_ttl():
+    client, mock_redis = _make_client()
+    with pytest.raises(ValueError, match="ttl_s must be a positive integer"):
+        await client.set_lease("worker-1", b"bytes", ttl_s=0)
