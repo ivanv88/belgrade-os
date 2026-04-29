@@ -7,7 +7,7 @@ use crate::{config::Config, registry::{ToolRegistration, ToolRegistry}};
 pub struct AppState {
     pub registry: Arc<ToolRegistry>,
     pub config: Arc<Config>,
-    // http field removed — re-added in Task 4 with handle_execute
+    pub http: reqwest::Client,
 }
 
 #[derive(Deserialize)]
@@ -100,16 +100,63 @@ async fn handle_tools(
 }
 
 async fn handle_execute(
-    State(_state): State<AppState>,
+    State(state): State<AppState>,
     Json(req): Json<ExecuteRequest>,
 ) -> Json<ExecuteResponse> {
-    Json(ExecuteResponse {
-        call_id: req.call_id,
-        task_id: req.task_id,
-        success: false,
-        output_json: String::new(),
-        error: "not implemented".to_string(),
-    })
+    let tool = match state.registry.get(&req.tool_name) {
+        Some(t) => t,
+        None => {
+            return Json(ExecuteResponse {
+                call_id: req.call_id,
+                task_id: req.task_id,
+                success: false,
+                output_json: String::new(),
+                error: format!("tool not found: {}", req.tool_name),
+            })
+        }
+    };
+
+    let payload = serde_json::json!({
+        "tool_name": req.tool_name,
+        "input_json": req.input_json,
+        "trace_id": req.trace_id,
+    });
+
+    let callback_url = format!("{}/execute", tool.callback_url);
+    match state.http.post(&callback_url).json(&payload).send().await {
+        Ok(resp) if resp.status().is_success() => {
+            match resp.json::<serde_json::Value>().await {
+                Ok(data) => Json(ExecuteResponse {
+                    call_id: req.call_id,
+                    task_id: req.task_id,
+                    success: data["success"].as_bool().unwrap_or(false),
+                    output_json: data["output_json"].as_str().unwrap_or("").to_string(),
+                    error: data["error"].as_str().unwrap_or("").to_string(),
+                }),
+                Err(e) => Json(ExecuteResponse {
+                    call_id: req.call_id,
+                    task_id: req.task_id,
+                    success: false,
+                    output_json: String::new(),
+                    error: format!("parse error: {e}"),
+                }),
+            }
+        }
+        Ok(resp) => Json(ExecuteResponse {
+            call_id: req.call_id,
+            task_id: req.task_id,
+            success: false,
+            output_json: String::new(),
+            error: format!("app error: HTTP {}", resp.status()),
+        }),
+        Err(e) => Json(ExecuteResponse {
+            call_id: req.call_id,
+            task_id: req.task_id,
+            success: false,
+            output_json: String::new(),
+            error: format!("dispatch error: {e}"),
+        }),
+    }
 }
 
 async fn handle_notifications_provider(
@@ -123,7 +170,7 @@ async fn handle_notifications_provider(
 }
 
 pub fn create_router(registry: Arc<ToolRegistry>, config: Arc<Config>) -> Router {
-    let state = AppState { registry, config };
+    let state = AppState { registry, config, http: reqwest::Client::new() };
     Router::new()
         .route("/v1/register", post(handle_register))
         .route("/v1/tools", get(handle_tools))
@@ -263,5 +310,183 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+    }
+
+    #[tokio::test]
+    async fn test_execute_unknown_tool_returns_error() {
+        let registry = Arc::new(ToolRegistry::new());
+        let app = create_router(Arc::clone(&registry), make_config());
+
+        let body = serde_json::json!({
+            "call_id": "c1", "task_id": "t1",
+            "tool_name": "unknown:tool",
+            "input_json": "{}", "trace_id": "tr1"
+        });
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/v1/execute")
+                    .header("content-type", "application/json")
+                    .body(Body::from(body.to_string()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        let bytes = resp.into_body().collect().await.unwrap().to_bytes();
+        let json: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(json["success"], false);
+        assert!(json["error"].as_str().unwrap().contains("tool not found"));
+        assert_eq!(json["call_id"], "c1");
+        assert_eq!(json["task_id"], "t1");
+    }
+
+    #[tokio::test]
+    async fn test_execute_dispatches_to_callback_and_returns_result() {
+        use wiremock::{matchers::{method, path}, Mock, MockServer, ResponseTemplate};
+
+        let mock_server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/execute"))
+            .respond_with(
+                ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                    "success": true,
+                    "output_json": "{\"added\":true}",
+                    "error": ""
+                })),
+            )
+            .mount(&mock_server)
+            .await;
+
+        let registry = Arc::new(ToolRegistry::new());
+        registry.register(
+            "shopping",
+            &mock_server.uri(),
+            &[ToolRegistration {
+                name: "shopping:add_item".to_string(),
+                description: "Add item".to_string(),
+                input_schema_json: "{}".to_string(),
+            }],
+        );
+        let app = create_router(Arc::clone(&registry), make_config());
+
+        let body = serde_json::json!({
+            "call_id": "c1", "task_id": "t1",
+            "tool_name": "shopping:add_item",
+            "input_json": "{\"item\":\"milk\"}", "trace_id": "tr1"
+        });
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/v1/execute")
+                    .header("content-type", "application/json")
+                    .body(Body::from(body.to_string()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        let bytes = resp.into_body().collect().await.unwrap().to_bytes();
+        let json: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        assert!(json["success"].as_bool().unwrap());
+        assert_eq!(json["call_id"], "c1");
+        assert_eq!(json["task_id"], "t1");
+        assert_eq!(json["output_json"], "{\"added\":true}");
+    }
+
+    #[tokio::test]
+    async fn test_execute_callback_connection_error_returns_failed_result() {
+        let registry = Arc::new(ToolRegistry::new());
+        // port 1 — nothing listens there
+        registry.register(
+            "shopping",
+            "http://127.0.0.1:1",
+            &[ToolRegistration {
+                name: "shopping:add_item".to_string(),
+                description: "Add item".to_string(),
+                input_schema_json: "{}".to_string(),
+            }],
+        );
+        let app = create_router(Arc::clone(&registry), make_config());
+
+        let body = serde_json::json!({
+            "call_id": "c1", "task_id": "t1",
+            "tool_name": "shopping:add_item",
+            "input_json": "{}", "trace_id": "tr1"
+        });
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/v1/execute")
+                    .header("content-type", "application/json")
+                    .body(Body::from(body.to_string()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        let bytes = resp.into_body().collect().await.unwrap().to_bytes();
+        let json: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(json["success"], false);
+        assert!(json["error"].as_str().unwrap().contains("dispatch error"));
+        assert_eq!(json["call_id"], "c1");
+        assert_eq!(json["task_id"], "t1");
+    }
+
+    #[tokio::test]
+    async fn test_execute_forwards_correct_payload_to_callback() {
+        use wiremock::{matchers::{body_json, method, path}, Mock, MockServer, ResponseTemplate};
+
+        let mock_server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/execute"))
+            .and(body_json(serde_json::json!({
+                "tool_name": "shopping:add_item",
+                "input_json": "{\"item\":\"milk\"}",
+                "trace_id": "tr1"
+            })))
+            .respond_with(
+                ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                    "success": true, "output_json": "{}", "error": ""
+                })),
+            )
+            .mount(&mock_server)
+            .await;
+
+        let registry = Arc::new(ToolRegistry::new());
+        registry.register(
+            "shopping",
+            &mock_server.uri(),
+            &[ToolRegistration {
+                name: "shopping:add_item".to_string(),
+                description: "".to_string(),
+                input_schema_json: "{}".to_string(),
+            }],
+        );
+        let app = create_router(Arc::clone(&registry), make_config());
+
+        let body = serde_json::json!({
+            "call_id": "c1", "task_id": "t1",
+            "tool_name": "shopping:add_item",
+            "input_json": "{\"item\":\"milk\"}", "trace_id": "tr1"
+        });
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/v1/execute")
+                    .header("content-type", "application/json")
+                    .body(Body::from(body.to_string()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        let bytes = resp.into_body().collect().await.unwrap().to_bytes();
+        let json: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        assert!(json["success"].as_bool().unwrap(), "wiremock body matcher failed — wrong payload sent");
     }
 }
