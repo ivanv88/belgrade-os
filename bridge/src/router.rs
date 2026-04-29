@@ -147,7 +147,7 @@ async fn handle_execute(
             task_id: req.task_id,
             success: false,
             output_json: String::new(),
-            error: format!("app error: HTTP {}", resp.status()),
+            error: format!("app error: HTTP {}", resp.status().as_u16()),
         }),
         Err(e) => Json(ExecuteResponse {
             call_id: req.call_id,
