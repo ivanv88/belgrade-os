@@ -24,12 +24,12 @@ async def _consumer_loop(
         if result is None:
             continue
         msg_id, call_bytes = result
-        call = belgrade_os_pb2.ToolCall()
-        call.ParseFromString(call_bytes)
         try:
+            call = belgrade_os_pb2.ToolCall()
+            call.ParseFromString(call_bytes)
             await process_tool_call(call, redis, bridge, worker_id, lease_ttl_s)
         except Exception:
-            log.exception("unhandled error for call %s task %s", call.call_id, call.task_id)
+            log.exception("unhandled error msg=%s", msg_id)
         finally:
             await redis.ack_tool_call(CONSUMER_GROUP, msg_id)
 

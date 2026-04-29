@@ -41,6 +41,10 @@ async def test_consumer_loop_processes_and_acks():
     mock_process.assert_awaited_once()
     call_arg = mock_process.await_args.args[0]
     assert call_arg.task_id == "t1"
+    assert mock_process.await_args.args[1] is mock_redis
+    assert mock_process.await_args.args[2] is mock_bridge
+    assert mock_process.await_args.args[3] == "w1"
+    assert mock_process.await_args.args[4] == 60
     mock_redis.ack_tool_call.assert_awaited_once_with(CONSUMER_GROUP, "msg-1")
 
 

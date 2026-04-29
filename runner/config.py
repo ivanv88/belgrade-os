@@ -6,7 +6,6 @@ from pydantic_settings import BaseSettings
 class Config(BaseSettings):
     redis_url: str = "redis://localhost:6379"
     bridge_url: str = "http://localhost:8081"
-    consumer_group: str = "tool-runners"
     worker_id: str = ""
     lease_ttl_s: int = 60
     tool_timeout_s: int = 30
