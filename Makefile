@@ -7,7 +7,7 @@ export PATH := $(PATH):$(shell go env GOPATH)/bin
 deps:
 	brew install protobuf go rust
 	go install google.golang.org/protobuf/cmd/protoc-gen-go@latest
-	pip3 install "grpcio-tools==1.64.1" "protobuf==4.25.3" "pytest==8.2.2"
+	pip3 install -r runner/requirements-dev.txt -r inference/requirements-dev.txt
 
 # ─── Proto codegen ────────────────────────────────────────────────────────────
 proto: gateway/gen/belgrade_os.pb.go runner/gen/belgrade_os_pb2.py inference/gen/belgrade_os_pb2.py
@@ -46,7 +46,7 @@ test: proto
 
 # ─── Dev infrastructure ───────────────────────────────────────────────────────
 dev:
-	docker-compose up -d redis cloudflared
+	docker-compose up -d redis tunnel
 
 # ─── Clean generated artifacts ────────────────────────────────────────────────
 clean:

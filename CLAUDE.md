@@ -18,7 +18,7 @@ make build
 make test
 
 # Start Redis (required for integration tests and local dev)
-make dev                         # docker-compose up -d redis cloudflared
+make dev                         # docker-compose up -d redis tunnel
 
 # Per-service tests
 cd gateway  && go test ./... -v
