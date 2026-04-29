@@ -15,6 +15,7 @@ pub struct RegisterRequest {
     pub app_id: String,
     pub callback_url: String,
     pub tools: Vec<ToolDef>,
+    pub subscriptions: Option<Vec<String>>,
 }
 
 #[derive(Deserialize)]
@@ -39,6 +40,8 @@ pub struct ExecuteRequest {
     pub tool_name: String,
     pub input_json: String,
     pub trace_id: String,
+    pub user_id: Option<String>,
+    pub tenant_id: Option<String>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -55,6 +58,15 @@ pub struct NotificationsProviderResponse {
     pub provider: String,
     pub base_url: String,
     pub topic: String,
+}
+
+#[derive(Deserialize, Serialize, Clone)]
+pub struct EventPayload {
+    pub topic: String,
+    pub payload: serde_json::Value,
+    pub app_id: String,
+    pub tenant_id: Option<String>,
+    pub trace_id: String,
 }
 
 async fn handle_register(
@@ -79,7 +91,45 @@ async fn handle_register(
         })
         .collect();
     state.registry.register(&req.app_id, &req.callback_url, &registrations);
+
+    if let Some(subs) = req.subscriptions {
+        state.registry.subscribe(&req.app_id, subs);
+    }
+
     Ok(StatusCode::NO_CONTENT)
+}
+
+async fn handle_publish(
+    State(state): State<AppState>,
+    Json(event): Json<EventPayload>,
+) -> StatusCode {
+    let subscribers = state.registry.get_subscribers(&event.topic);
+    
+    if subscribers.is_empty() {
+        return StatusCode::ACCEPTED;
+    }
+
+    let http = state.http.clone();
+    // NOTE: We spawn a task to handle fan-out asynchronously. The dropped JoinHandle
+    // is intentional — this is a fire-and-forget notification system.
+    tokio::spawn(async move {
+        for (app_id, callback_url) in subscribers {
+            let url = format!("{}/events", callback_url);
+            match http.post(&url).json(&event).send().await {
+                Ok(resp) if resp.status().is_success() => {
+                    tracing::debug!(app_id, topic = event.topic, "Event delivered");
+                }
+                Ok(resp) => {
+                    tracing::warn!(app_id, topic = event.topic, status = resp.status().as_u16(), "Event delivery failed");
+                }
+                Err(e) => {
+                    tracing::error!(app_id, topic = event.topic, error = %e, "Event delivery error");
+                }
+            }
+        }
+    });
+
+    StatusCode::ACCEPTED
 }
 
 async fn handle_tools(
@@ -120,6 +170,8 @@ async fn handle_execute(
         "tool_name": req.tool_name,
         "input_json": req.input_json,
         "trace_id": req.trace_id,
+        "user_id": req.user_id,
+        "tenant_id": req.tenant_id,
     });
 
     let callback_url = format!("{}/execute", tool.callback_url);
@@ -175,6 +227,7 @@ pub fn create_router(registry: Arc<ToolRegistry>, config: Arc<Config>) -> Router
         .route("/v1/register", post(handle_register))
         .route("/v1/tools", get(handle_tools))
         .route("/v1/execute", post(handle_execute))
+        .route("/v1/events/publish", post(handle_publish))
         .route("/v1/notifications/provider", get(handle_notifications_provider))
         .with_state(state)
 }
@@ -446,7 +499,9 @@ mod tests {
             .and(body_json(serde_json::json!({
                 "tool_name": "shopping:add_item",
                 "input_json": "{\"item\":\"milk\"}",
-                "trace_id": "tr1"
+                "trace_id": "tr1",
+                "user_id": "u1",
+                "tenant_id": "t1"
             })))
             .respond_with(
                 ResponseTemplate::new(200).set_body_json(serde_json::json!({
@@ -471,7 +526,8 @@ mod tests {
         let body = serde_json::json!({
             "call_id": "c1", "task_id": "t1",
             "tool_name": "shopping:add_item",
-            "input_json": "{\"item\":\"milk\"}", "trace_id": "tr1"
+            "input_json": "{\"item\":\"milk\"}", "trace_id": "tr1",
+            "user_id": "u1", "tenant_id": "t1"
         });
         let resp = app
             .oneshot(
@@ -488,5 +544,81 @@ mod tests {
         let bytes = resp.into_body().collect().await.unwrap().to_bytes();
         let json: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
         assert!(json["success"].as_bool().unwrap(), "wiremock body matcher failed — wrong payload sent");
+    }
+
+    #[tokio::test]
+    async fn test_publish_delivers_to_subscribers() {
+        use wiremock::{matchers::{method, path, body_json}, Mock, MockServer, ResponseTemplate};
+
+        let mock_server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/events"))
+            .and(body_json(serde_json::json!({
+                "topic": "test.topic",
+                "payload": {"data": 123},
+                "app_id": "sender",
+                "tenant_id": "t1",
+                "trace_id": "tr1"
+            })))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({"status": "ok"})))
+            .expect(1)
+            .mount(&mock_server)
+            .await;
+
+        let registry = Arc::new(ToolRegistry::new());
+        registry.register("receiver", &mock_server.uri(), &[]);
+        registry.subscribe("receiver", vec!["test.topic".to_string()]);
+
+        let app = create_router(Arc::clone(&registry), make_config());
+
+        let body = serde_json::json!({
+            "topic": "test.topic",
+            "payload": {"data": 123},
+            "app_id": "sender",
+            "tenant_id": "t1",
+            "trace_id": "tr1"
+        });
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/v1/events/publish")
+                    .header("content-type", "application/json")
+                    .body(Body::from(body.to_string()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        
+        assert_eq!(resp.status(), StatusCode::ACCEPTED);
+        
+        // Wait for tokio::spawn fan-out
+        tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+    }
+
+    #[tokio::test]
+    async fn test_publish_no_subscribers_is_accepted() {
+        let registry = Arc::new(ToolRegistry::new());
+        let app = create_router(Arc::clone(&registry), make_config());
+
+        let body = serde_json::json!({
+            "topic": "unknown.topic",
+            "payload": {},
+            "app_id": "sender",
+            "trace_id": "tr1"
+        });
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/v1/events/publish")
+                    .header("content-type", "application/json")
+                    .body(Body::from(body.to_string()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        
+        assert_eq!(resp.status(), StatusCode::ACCEPTED);
     }
 }

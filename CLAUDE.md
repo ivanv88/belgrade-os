@@ -18,7 +18,7 @@ make build
 make test
 
 # Start Redis (required for integration tests and local dev)
-make dev                         # docker-compose up -d redis tunnel
+make dev                         # docker-compose up -d redis tunnel (does NOT start db)
 
 # Per-service tests
 cd gateway  && go test ./... -v
@@ -32,7 +32,7 @@ make clean
 
 ## Architecture
 
-Belgrade OS is a **distributed monorepo** running on Raspberry Pi 4 (8GB). Five services communicate exclusively through Redis — no direct inter-service calls.
+Belgrade OS is a **distributed monorepo** running on Lenovo i5 10th gen IdeaPad (12GB RAM, Pop!_OS headless). Core services communicate exclusively through Redis — no direct inter-service calls.
 
 ```
 browser / Obsidian
@@ -66,6 +66,18 @@ browser / Obsidian
 | `inference/` | Python | Inference Controller — calls Claude API, drives tool loop |
 | `runner/` | Python | Resource Runner — executes tool calls from apps |
 | `bridge/` | Rust | Capability Bridge — tool registry, serves tool lists |
+| `platform_controller/` | Python | App lifecycle manager — supervises app processes, dynamic cron scheduling via APScheduler |
+
+### Apps & SDK
+
+| Dir | Role |
+|---|---|
+| `sdk/belgrade_sdk/` | Python SDK (`BelgradeApp`) — base class for building Belgrade apps; handles tool registration with bridge, `/execute` callback endpoint, and event routing |
+| `apps/health/` | Health tracking app |
+| `apps/nutrition/` | Nutrition tracking app |
+| `apps/shopping/` | Shopping list app |
+
+Apps register their tools at startup via `POST /v1/register` on the bridge, and expose a callback URL the bridge calls at `{callback_url}/execute` when a tool is invoked.
 
 ### Redis transport
 
@@ -111,11 +123,16 @@ Tests that touch Redis require it to be running:
 docker-compose up -d redis
 ```
 
+`platform_controller` also requires Postgres:
+```bash
+docker-compose up -d db
+```
+
 Redis-dependent tests skip gracefully (`t.Skipf`) when Redis is unreachable. Auth and config tests have no external deps.
 
 ## Deployment
 
-- **Host:** Raspberry Pi 4 (8GB); services run as systemd units or Docker containers
+- **Host:** Lenovo i5 10th gen IdeaPad (12GB RAM), Pop!_OS headless; services run as systemd units or Docker containers
 - **Access:** Cloudflare Tunnel (`beg-os.fyi`) + Zero Trust email OTP
 - **Storage:** `/mnt/storage`; family data at `/mnt/storage/shares/family/obsidian`
 - **Backup:** weekly `pg_dump` + rsync at `/mnt/storage/backups/backup.sh`

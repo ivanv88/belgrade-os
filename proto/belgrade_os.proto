@@ -30,6 +30,8 @@ message ToolCall {
   string tool_name  = 3;  // namespaced: "shopping:add_item"
   string input_json = 4;  // JSON object matching Tool.input_schema_json
   string trace_id   = 5;  // propagated from Task.trace_id for distributed tracing
+  string user_id    = 6;  // propagated from Task.user_id
+  string tenant_id  = 7;  // resolved by Inference Controller
 }
 
 // Tool result: Resource Runner → Redis Stream "tasks:tool_results" → Inference Controller
@@ -40,6 +42,8 @@ message ToolResult {
   string output_json = 4;  // non-empty on success=true
   string error       = 5;  // non-empty on success=false
   int64  duration_ms = 6;  // wall-clock execution time, used by circuit-breaker and observability
+  string user_id     = 7;
+  string tenant_id   = 8;
 }
 
 // ─── Streaming ────────────────────────────────────────────────────────────────

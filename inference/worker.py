@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+import httpx
+import os
 from typing import Optional
 
 from gen import belgrade_os_pb2
@@ -8,7 +10,28 @@ from providers.base import InferenceProvider, StreamDone, TextChunk, ToolUse
 from redis_client import RedisClient
 
 CONSUMER_GROUP = "inference"
+BRIDGE_URL = os.getenv("BEG_OS_BRIDGE_URL", "http://localhost:8081")
 
+async def fetch_tools() -> list:
+    """Fetches tools from the Capability Bridge and returns them in a format suitable for the provider."""
+    try:
+        async with httpx.AsyncClient() as client:
+            resp = await client.get(f"{BRIDGE_URL}/v1/tools")
+            resp.raise_for_status()
+            tools_data = resp.json()
+            
+            # Format: [{"name": "...", "description": "...", "input_schema": {...}}]
+            return [
+                {
+                    "name": t["name"],
+                    "description": t["description"],
+                    "input_schema": json.loads(t["input_schema_json"])
+                }
+                for t in tools_data
+            ]
+    except Exception as e:
+        print(f"Failed to fetch tools from bridge: {e}")
+        return []
 
 async def process_task(
     task: belgrade_os_pb2.Task,
@@ -18,7 +41,12 @@ async def process_task(
 ) -> None:
     """Drive the full inference + tool loop for a single task."""
     messages: list = [{"role": "user", "content": task.prompt}]
-    tools: list = []
+    
+    # Task currently doesn't carry tenant_id (missing in gateway/handler.go probably)
+    # For now, let's derive it or assume it's passed.
+    tenant_id = "household-vladisavljevic" # Placeholder or derived from registry
+
+    tools = await fetch_tools()
 
     try:
         while True:
@@ -35,8 +63,6 @@ async def process_task(
 
                 elif isinstance(event, StreamDone):
                     if event.stop_reason == "end_turn":
-                        # Break out of the inner for-loop; the flag below
-                        # will also break the outer while.
                         done_signal = True
                         break
 
@@ -52,6 +78,8 @@ async def process_task(
                             tool_name=tool_use.name,
                             input_json=json.dumps(tool_use.input),
                             trace_id=task.trace_id,
+                            user_id=task.user_id,
+                            tenant_id=tenant_id,
                         )
                         await redis.push_tool_call(tc.SerializeToString())
 

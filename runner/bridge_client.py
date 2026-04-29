@@ -15,6 +15,8 @@ class BridgeClient:
                 "tool_name":  call.tool_name,
                 "input_json": call.input_json,
                 "trace_id":   call.trace_id,
+                "user_id":    call.user_id,
+                "tenant_id":  call.tenant_id,
             })
             response.raise_for_status()
             data = response.json()
@@ -24,6 +26,8 @@ class BridgeClient:
                 success=data["success"],
                 output_json=data.get("output_json", ""),
                 error=data.get("error", ""),
+                user_id=call.user_id,
+                tenant_id=call.tenant_id,
             )
         except Exception as exc:
             return belgrade_os_pb2.ToolResult(

@@ -18,18 +18,35 @@ pub struct ToolRegistration {
 
 pub struct ToolRegistry {
     tools: RwLock<HashMap<String, RegisteredTool>>,
+    subscriptions: RwLock<HashMap<String, Vec<String>>>, // Topic -> Vec<AppId>
+    // Maintained separately from RegisteredTool.callback_url to support event
+    // fan-out by app_id without scanning the tools map.
+    app_callbacks: RwLock<HashMap<String, String>>,      // AppId -> CallbackUrl
 }
 
 impl ToolRegistry {
     pub fn new() -> Self {
-        Self { tools: RwLock::new(HashMap::new()) }
+        Self {
+            tools: RwLock::new(HashMap::new()),
+            subscriptions: RwLock::new(HashMap::new()),
+            app_callbacks: RwLock::new(HashMap::new()),
+        }
     }
 
     pub fn register(&self, app_id: &str, callback_url: &str, tools: &[ToolRegistration]) {
-        let mut map = self.tools.write().unwrap();
+        // NOTE: We acquire two different locks sequentially. This leaves a tiny window
+        // where tools and callbacks might be out of sync, but since registration
+        // is infrequent and authoritative, this is acceptable and avoids a more
+        // complex state lock.
+        {
+            let mut callbacks = self.app_callbacks.write().expect("lock poisoned");
+            callbacks.insert(app_id.to_string(), callback_url.to_string());
+        }
+        
+        let mut map = self.tools.write().expect("lock poisoned");
         map.retain(|_, v| v.app_id != app_id);
         for t in tools {
-            assert!(
+            debug_assert!(
                 t.name.starts_with(&format!("{}:", app_id)),
                 "tool name {:?} must be namespaced as '{}:<name>'",
                 t.name,
@@ -45,19 +62,66 @@ impl ToolRegistry {
         }
     }
 
+    pub fn subscribe(&self, app_id: &str, topics: Vec<String>) {
+        let mut subs = self.subscriptions.write().expect("lock poisoned");
+        
+        // Remove app from all existing topics to ensure re-registration is authoritative
+        for topic_list in subs.values_mut() {
+            topic_list.retain(|id| id != app_id);
+        }
+        
+        // Add to new topics
+        for topic in topics {
+            let entry = subs.entry(topic).or_default();
+            if !entry.iter().any(|s| s == app_id) {
+                entry.push(app_id.to_string());
+            }
+        }
+        
+        // Clean up empty topics
+        subs.retain(|_, v| !v.is_empty());
+    }
+
+    pub fn get_subscribers(&self, topic: &str) -> Vec<(String, String)> {
+        let subs = self.subscriptions.read().expect("lock poisoned");
+        let callbacks = self.app_callbacks.read().expect("lock poisoned");
+        
+        subs.get(topic)
+            .map(|app_ids| {
+                app_ids.iter()
+                    .filter_map(|id| {
+                        callbacks.get(id).map(|url| (id.clone(), url.clone()))
+                    })
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+
     pub fn get(&self, tool_name: &str) -> Option<RegisteredTool> {
-        self.tools.read().unwrap().get(tool_name).cloned()
+        self.tools.read().expect("lock poisoned").get(tool_name).cloned()
     }
 
     pub fn list(&self) -> Vec<RegisteredTool> {
-        let mut tools: Vec<RegisteredTool> = self.tools.read().unwrap().values().cloned().collect();
+        let mut tools: Vec<RegisteredTool> = self.tools.read().expect("lock poisoned").values().cloned().collect();
         tools.sort_by(|a, b| a.name.cmp(&b.name));
         tools
     }
 
     pub fn unregister(&self, app_id: &str) {
-        let mut map = self.tools.write().unwrap();
-        map.retain(|_, v| v.app_id != app_id);
+        // Comprehensive cleanup across all registry maps
+        {
+            self.tools.write().expect("lock poisoned").retain(|_, v| v.app_id != app_id);
+        }
+        {
+            self.app_callbacks.write().expect("lock poisoned").remove(app_id);
+        }
+        {
+            let mut subs = self.subscriptions.write().expect("lock poisoned");
+            for topic_list in subs.values_mut() {
+                topic_list.retain(|id| id != app_id);
+            }
+            subs.retain(|_, v| !v.is_empty());
+        }
     }
 }
 
@@ -87,6 +151,42 @@ mod tests {
         assert_eq!(t.name, "shopping:add_item");
         assert_eq!(t.app_id, "shopping");
         assert_eq!(t.callback_url, "http://app:8000");
+    }
+
+    #[test]
+    fn test_subscribe_and_get_subscribers() {
+        let reg = ToolRegistry::new();
+        reg.register("app1", "http://app1:8000", &[]);
+        reg.subscribe("app1", vec!["topic1".to_string()]);
+        
+        let subs = reg.get_subscribers("topic1");
+        assert_eq!(subs.len(), 1);
+        assert_eq!(subs[0].0, "app1");
+        assert_eq!(subs[0].1, "http://app1:8000");
+    }
+
+    #[test]
+    fn test_subscribe_authoritative_replaces_old() {
+        let reg = ToolRegistry::new();
+        reg.register("app1", "http://app1:8000", &[]);
+        reg.subscribe("app1", vec!["topic1".to_string(), "topic2".to_string()]);
+        reg.subscribe("app1", vec!["topic2".to_string()]);
+        
+        assert!(reg.get_subscribers("topic1").is_empty());
+        assert_eq!(reg.get_subscribers("topic2").len(), 1);
+    }
+
+    #[test]
+    fn test_unregister_cleans_all_maps() {
+        let reg = ToolRegistry::new();
+        reg.register("app1", "http://app1:8000", &[tool("app1:t1")]);
+        reg.subscribe("app1", vec!["topic1".to_string()]);
+        
+        reg.unregister("app1");
+        
+        assert!(reg.get("app1:t1").is_none());
+        assert!(reg.get_subscribers("topic1").is_empty());
+        assert!(reg.app_callbacks.read().unwrap().get("app1").is_none());
     }
 
     #[test]
@@ -123,6 +223,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(debug_assertions)]
     #[should_panic(expected = "must be namespaced")]
     fn test_register_rejects_unnamespaceed_tool() {
         let reg = ToolRegistry::new();

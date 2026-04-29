@@ -81,3 +81,27 @@ For full technical detail see `docs/tech.spec.md`.
 - **Persistence:** Live data in `/data/postgres` and `/mnt/storage` — git-ignored, never committed
 - **Secrets:** Managed via `.env` file only
 - **Family data:** Never leaves the Pi — Supabase is for metadata and AI logs only
+
+---
+
+## 5. Roadmap (Current Status)
+
+### ✅ Phase 1: Distributed Foundation (Completed Today)
+- [x] **5-Service Architecture**: Gateway (Go), Bridge (Rust), Inference (Py), Runner (Py), Controller (Py).
+- [x] **OS Kernel**: Platform Controller with sub-process management and hot-reload.
+- [x] **Belgrade SDK**: @tool and @on_event decorators with automatic registration.
+- [x] **Dynamic Scheduler**: Postgres-backed cron jobs managed by the Controller.
+- [x] **Event Bus**: Authoritative pub/sub broker implemented in the Bridge.
+- [x] **Log Visibility**: Automatic redirection of app logs to apps/{id}/app.log.
+- [x] **Identity Loop**: Propagation of user_id/tenant_id for scoped DB/Notify.
+
+### 🚀 Phase 2: The Nervous System (Next)
+- [ ] **Notification Service**: Centralized service for ntfy.sh, email, and system alerts.
+- [ ] **Multi-UI Service**: Serve static assets for app dashboards and Obsidian plugins.
+- [ ] **Platform Connectors**: OAuth-managed connectors for Google Drive, Calendar, and Gmail.
+- [ ] **Persistent Bridge**: Migrate Bridge registry from in-memory to Redis Hashes.
+
+### 🔮 Phase 3: AI Intelligence
+- [ ] **Admin Agent Evolution**: Enable the agent to auto-install apps from Git URLs.
+- [ ] **Self-Healing**: Agent monitoring of app.log to fix bugs automatically.
+- [ ] **Workflow Orchestrator**: LLM-driven complex multi-app sequences.

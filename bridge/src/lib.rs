@@ -34,6 +34,8 @@ mod tests {
             tool_name: "shopping:add_item".to_string(),
             input_json: r#"{"item": "milk"}"#.to_string(),
             trace_id: "trace-abc".to_string(),
+            user_id: "user-1".to_string(),
+            tenant_id: "tenant-1".to_string(),
         };
         assert_eq!(call.tool_name, "shopping:add_item");
         assert_eq!(call.trace_id, "trace-abc");
@@ -48,6 +50,8 @@ mod tests {
             output_json: String::new(),
             error: "app crashed".to_string(),
             duration_ms: 42,
+            user_id: "user-1".to_string(),
+            tenant_id: "tenant-1".to_string(),
         };
         assert!(!result.success);
         assert_eq!(result.error, "app crashed");
