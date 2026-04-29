@@ -1,4 +1,4 @@
 -r requirements.txt
 grpcio-tools==1.64.1
 pytest==8.2.2
-pytest-asyncio>=0.23
+pytest-asyncio==1.2.0
