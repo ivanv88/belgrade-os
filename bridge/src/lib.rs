@@ -2,6 +2,8 @@ pub mod belgrade_os {
     include!(concat!(env!("OUT_DIR"), "/belgrade_os.rs"));
 }
 
+pub mod config;
+
 #[cfg(test)]
 mod tests {
     use super::belgrade_os::{
