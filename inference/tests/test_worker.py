@@ -70,16 +70,10 @@ async def _provider_from_events(event_lists: list) -> MagicMock:
 
 
 async def test_publishes_response_chunks_and_done():
-    task = _make_task()
-    mock_redis = _make_redis()
-    provider = await _provider_from_events([
-        [
-            belgrade_os_pb2.ThoughtEvent,  # placeholder — we use base types from providers
-        ]
-    ])
-
     from providers.base import TextChunk, StreamDone
 
+    task = _make_task()
+    mock_redis = _make_redis()
     provider = await _provider_from_events([
         [TextChunk("Hello"), TextChunk(" world"), StreamDone("end_turn")],
     ])
