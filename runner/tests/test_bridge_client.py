@@ -8,7 +8,8 @@ from bridge_client import BridgeClient
 
 def _make_call() -> belgrade_os_pb2.ToolCall:
     c = belgrade_os_pb2.ToolCall()
-    c.call_id = "c1"; c.task_id = "t1"
+    c.call_id = "c1"
+    c.task_id = "t1"
     c.tool_name = "shopping:add_item"
     c.input_json = '{"item":"milk"}'
     c.trace_id = "tr1"
@@ -87,6 +88,7 @@ async def test_execute_sends_correct_payload():
     assert post_kwargs.args[0] == "/v1/execute"
     sent = post_kwargs.kwargs["json"]
     assert sent["call_id"] == "c1"
+    assert sent["task_id"] == "t1"
     assert sent["tool_name"] == "shopping:add_item"
     assert sent["input_json"] == '{"item":"milk"}'
     assert sent["trace_id"] == "tr1"
