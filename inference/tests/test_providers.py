@@ -109,21 +109,21 @@ async def test_gemini_yields_text_chunks():
 
     chunk1 = MagicMock()
     chunk1.text = "Hello"
-    chunk1.candidates = []
+    chunk1.function_calls = None
     chunk2 = MagicMock()
     chunk2.text = " world"
-    chunk2.candidates = []
+    chunk2.function_calls = None
 
     async def fake_stream(*_, **__):
         for c in [chunk1, chunk2]:
             yield c
 
     with patch("providers.gemini.genai") as mock_genai:
-        mock_model = MagicMock()
-        mock_genai.GenerativeModel.return_value = mock_model
-        mock_model.generate_content_async = AsyncMock(return_value=fake_stream())
+        mock_client = MagicMock()
+        mock_genai.Client.return_value = mock_client
+        mock_client.aio.models.generate_content_stream = AsyncMock(return_value=fake_stream())
 
-        provider = GeminiProvider(api_key="gkey", model="gemini-1.5-pro", max_tokens=1024)
+        provider = GeminiProvider(api_key="gkey", model="gemini-2.0-flash", max_tokens=1024)
         events = []
         async for evt in provider.generate([{"role": "user", "content": "hi"}]):
             events.append(evt)
@@ -140,28 +140,21 @@ async def test_gemini_maps_function_call_to_tool_use():
     from unittest.mock import patch
 
     fc = MagicMock()
+    fc.id = "fc-1"
     fc.name = "search"
     fc.args = {"q": "test"}
 
-    part = MagicMock()
-    part.function_call = fc
-    part.text = None
-
-    candidate = MagicMock()
-    candidate.content = MagicMock()
-    candidate.content.parts = [part]
-
     chunk = MagicMock()
     chunk.text = None
-    chunk.candidates = [candidate]
+    chunk.function_calls = [fc]
 
     async def fake_stream(*_, **__):
         yield chunk
 
     with patch("providers.gemini.genai") as mock_genai:
-        mock_model = MagicMock()
-        mock_genai.GenerativeModel.return_value = mock_model
-        mock_model.generate_content_async = AsyncMock(return_value=fake_stream())
+        mock_client = MagicMock()
+        mock_genai.Client.return_value = mock_client
+        mock_client.aio.models.generate_content_stream = AsyncMock(return_value=fake_stream())
 
         provider = GeminiProvider(api_key="gkey", model="m", max_tokens=100)
         events = []
@@ -173,6 +166,7 @@ async def test_gemini_maps_function_call_to_tool_use():
     assert isinstance(done, StreamDone)
     assert done.stop_reason == "tool_use"
     assert done.tool_calls[0].name == "search"
+    assert done.tool_calls[0].call_id == "fc-1"
 
 
 # ── OllamaProvider ───────────────────────────────────────────────────────────
