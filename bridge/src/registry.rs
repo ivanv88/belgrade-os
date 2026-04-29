@@ -29,6 +29,12 @@ impl ToolRegistry {
         let mut map = self.tools.write().unwrap();
         map.retain(|_, v| v.app_id != app_id);
         for t in tools {
+            assert!(
+                t.name.starts_with(&format!("{}:", app_id)),
+                "tool name {:?} must be namespaced as '{}:<name>'",
+                t.name,
+                app_id
+            );
             map.insert(t.name.clone(), RegisteredTool {
                 name: t.name.clone(),
                 description: t.description.clone(),
@@ -44,7 +50,20 @@ impl ToolRegistry {
     }
 
     pub fn list(&self) -> Vec<RegisteredTool> {
-        self.tools.read().unwrap().values().cloned().collect()
+        let mut tools: Vec<RegisteredTool> = self.tools.read().unwrap().values().cloned().collect();
+        tools.sort_by(|a, b| a.name.cmp(&b.name));
+        tools
+    }
+
+    pub fn unregister(&self, app_id: &str) {
+        let mut map = self.tools.write().unwrap();
+        map.retain(|_, v| v.app_id != app_id);
+    }
+}
+
+impl Default for ToolRegistry {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -101,5 +120,35 @@ mod tests {
         assert!(reg.get("app1:t1").is_none());
         assert!(reg.get("app1:t2").is_some());
         assert!(reg.get("app2:t1").is_some()); // app2 untouched
+    }
+
+    #[test]
+    #[should_panic(expected = "must be namespaced")]
+    fn test_register_rejects_unnamespaceed_tool() {
+        let reg = ToolRegistry::new();
+        reg.register("shopping", "http://app:8000", &[ToolRegistration {
+            name: "add_item".to_string(), // missing "shopping:" prefix
+            description: "".to_string(),
+            input_schema_json: "{}".to_string(),
+        }]);
+    }
+
+    #[test]
+    fn test_unregister_removes_app_tools() {
+        let reg = ToolRegistry::new();
+        reg.register("shopping", "http://app:8000", &[tool("shopping:add_item")]);
+        reg.register("meals", "http://meals:8000", &[tool("meals:plan")]);
+        reg.unregister("shopping");
+        assert!(reg.get("shopping:add_item").is_none());
+        assert!(reg.get("meals:plan").is_some()); // meals untouched
+    }
+
+    #[test]
+    fn test_list_is_sorted_by_name() {
+        let reg = ToolRegistry::new();
+        reg.register("app1", "http://app1:8000", &[tool("app1:z"), tool("app1:a")]);
+        let tools = reg.list();
+        let names: Vec<&str> = tools.iter().map(|t| t.name.as_str()).collect();
+        assert_eq!(names, vec!["app1:a", "app1:z"]);
     }
 }
