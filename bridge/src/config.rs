@@ -1,3 +1,4 @@
+#[derive(Debug)]
 pub struct Config {
     pub port: u16,
     pub ntfy_base_url: String,
@@ -9,8 +10,11 @@ impl Config {
         Self {
             port: std::env::var("PORT")
                 .unwrap_or_else(|_| "8081".to_string())
-                .parse()
-                .expect("PORT must be a number"),
+                .parse::<u16>()
+                .unwrap_or_else(|_| {
+                    let raw = std::env::var("PORT").unwrap_or_default();
+                    panic!("PORT must be a number in 0-65535, got {:?}", raw)
+                }),
             ntfy_base_url: std::env::var("NTFY_BASE_URL")
                 .unwrap_or_else(|_| "https://ntfy.sh".to_string()),
             ntfy_topic: std::env::var("NTFY_TOPIC")
@@ -45,6 +49,7 @@ mod tests {
     fn test_from_env() {
         // Clean before setting
         std::env::remove_var("PORT");
+        std::env::remove_var("NTFY_BASE_URL");
         std::env::remove_var("NTFY_TOPIC");
 
         std::env::set_var("PORT", "9090");
@@ -52,9 +57,11 @@ mod tests {
         let cfg = Config::from_env();
         assert_eq!(cfg.port, 9090);
         assert_eq!(cfg.ntfy_topic, "my-topic");
+        assert_eq!(cfg.ntfy_base_url, "https://ntfy.sh"); // default unchanged
 
         // Clean up after ourselves
         std::env::remove_var("PORT");
+        std::env::remove_var("NTFY_BASE_URL");
         std::env::remove_var("NTFY_TOPIC");
     }
 }
