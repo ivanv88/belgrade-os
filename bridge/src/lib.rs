@@ -5,6 +5,7 @@ pub mod belgrade_os {
 pub mod config;
 pub mod registry;
 pub mod router;
+pub mod store;
 
 #[cfg(test)]
 mod tests {

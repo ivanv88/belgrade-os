@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::sync::RwLock;
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 pub struct RegisteredTool {
     pub name: String,
     pub description: String,
@@ -105,6 +105,25 @@ impl ToolRegistry {
         let mut tools: Vec<RegisteredTool> = self.tools.read().expect("lock poisoned").values().cloned().collect();
         tools.sort_by(|a, b| a.name.cmp(&b.name));
         tools
+    }
+
+    pub fn hydrate(&self, state: crate::store::HydratedState) {
+        {
+            let mut tools = self.tools.write().expect("lock poisoned");
+            for tool in state.tools {
+                tools.insert(tool.name.clone(), tool);
+            }
+        }
+        {
+            let mut callbacks = self.app_callbacks.write().expect("lock poisoned");
+            callbacks.extend(state.callbacks);
+        }
+        {
+            let mut subs = self.subscriptions.write().expect("lock poisoned");
+            for (topic, app_ids) in state.subscriptions {
+                subs.insert(topic, app_ids);
+            }
+        }
     }
 
     pub fn unregister(&self, app_id: &str) {

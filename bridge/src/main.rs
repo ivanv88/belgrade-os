@@ -1,6 +1,7 @@
 mod config;
 mod registry;
 mod router;
+mod store;
 
 use std::sync::Arc;
 
