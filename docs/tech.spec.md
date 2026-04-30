@@ -1,5 +1,9 @@
 # Belgrade AI OS: Technical Specification v2.3
 
+> **⚠️ DEPRECATED** — This document describes the original FastAPI monolith architecture that was superseded in April 2026 by a distributed architecture (Go gateway, Rust bridge, Python inference/runner/platform-controller, Redis transport). The current architecture is documented in `CLAUDE.md` and `docs/main.spec.md`. This file is kept for historical reference.
+
+---
+
 ## 1. System Overview
 
 A modular monolith running on a Raspberry Pi 4 (8GB) + 4TB WD Red HDD. The **Core** is a platform engine (the Bootstrapper) that discovers, mounts, and runs **Apps**. The **Admin Agent** (Gemini 1.5 Pro in Docker) orchestrates the platform — it can discover apps via MCP, deploy new services on demand, and self-heal from logs.

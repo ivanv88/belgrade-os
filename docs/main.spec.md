@@ -1,8 +1,8 @@
 # Belgrade AI OS: Vision & Roadmap
 
 **Version:** 2.0.0
-**Host:** Raspberry Pi 4 (8GB RAM)
-**Storage:** 4TB WD Red HDD
+**Host:** Lenovo i5 10th gen IdeaPad (12GB RAM, Pop!_OS headless)
+**Storage:** `/mnt/storage` (HDD)
 **Security:** Cloudflare Zero Trust (Email OTP)
 
 ---
@@ -19,17 +19,26 @@ For full technical detail see `docs/tech.spec.md`.
 
 | Layer | Technology | Purpose |
 |---|---|---|
-| **Hardware** | Raspberry Pi 4 (8GB) | 24/7 Production Host |
-| **Backend** | FastAPI + SQLModel | Bootstrapper + Plugin API |
-| **Database** | PostgreSQL 15 (Docker) | Per-app schemas |
-| **Sync** | CouchDB + LiveSync | Obsidian real-time sync |
-| **AI Agent** | Gemini 1.5 Pro (Docker) | Orchestration + self-healing |
-| **Security** | Cloudflare Tunnel | Identity-based access (beg-os.fyi) |
-| **Cloud** | Supabase | Metadata, AI logs, task queues only |
+| **Hardware** | Lenovo i5 10th gen (12GB RAM) | 24/7 Production Host (Pop!_OS headless) |
+| **Gateway** | Go | HTTP entry point — JWT auth, task ingestion, SSE proxy |
+| **Bridge** | Rust (Axum) | Capability registry — tool registration, write-through Redis cache |
+| **Inference** | Python | Inference controller — Claude API, tool loop |
+| **Runner** | Python | Resource runner — executes tool calls from apps |
+| **Platform Controller** | Python | App lifecycle — process supervision, APScheduler cron |
+| **SDK** | Python (`belgrade_sdk`) | App base class — tool registration, `/execute` callback |
+| **Transport** | Redis (Streams + Pub/Sub) | All inter-service communication |
+| **Database** | PostgreSQL 15 (Docker) | Platform controller state, per-app schemas |
+| **Security** | Cloudflare Tunnel + Zero Trust | Identity-based access (beg-os.fyi, email OTP) |
+| **Sync** | CouchDB + LiveSync | Obsidian real-time sync (planned) |
 
 ---
 
-## 3. Implementation Roadmap
+## 3. Implementation Roadmap — Original Monolith Design
+
+> **⚠️ SUPERSEDED** — This roadmap described the original FastAPI monolith architecture (`core/loader.py`, `AppContext`, `asyncio.Queue` EventBus). The system was redesigned as a distributed architecture in April 2026. See Section 5 for the current roadmap.
+
+<details>
+<summary>Archived phases (click to expand)</summary>
 
 ### ✅ Phase 1: Infrastructure (Complete)
 - [x] Cloudflare Tunnel & Zero Trust Auth (Email OTP)
@@ -38,40 +47,13 @@ For full technical detail see `docs/tech.spec.md`.
 - [x] Cloudflared tunnel service in docker-compose
 - [x] Architecture spec and CLAUDE.md
 
-### 🕒 Phase 2: Platform Core (Current)
-- [ ] `core/models/manifest.py` — Pydantic v2 `AppManifest` schema
-- [ ] `core/loader.py` — Bootstrapper (manifest discovery, provisioning, trigger registration)
-- [ ] `core/context.py` — `AppContext` typed class (`io`, `db`, `notify`, `emit`, `meta`)
-- [ ] `core/io.py` — IO adapter classes (local, obsidian, gdrive)
-- [ ] `core/eventbus.py` — internal asyncio.Queue pub/sub
-- [ ] `core/executor.py` — `safe_execute` wrapper (error handling, circuit breaker, semaphore)
-- [ ] `shared/ntfy.py` — ntfy.sh notification helper
-- [ ] mypy setup
+### Phase 2: Platform Core
+- `core/models/manifest.py`, `core/loader.py`, `core/context.py`, `core/io.py`, `core/eventbus.py`, `core/executor.py`, `shared/ntfy.py`
 
-### ⬜ Phase 3: First App (Nutrition Worker)
-- [ ] `apps/nutrition/manifest.json` using the new contract
-- [ ] Nutrition `models.py` scoped to `app_nutrition` schema
-- [ ] `execute(ctx)` — nightly calorie deficit calculation at 20:00
-- [ ] ntfy.sh alert when goal met/missed
+### Phase 3–6: Apps, Admin Agent, Obsidian, Orchestrators
+- These phases were scoped for the monolith design and are not directly applicable to the distributed architecture.
 
-### ⬜ Phase 4: Admin Agent
-- [ ] Tecnativa docker-socket-proxy service in docker-compose (filters Docker API)
-- [ ] Admin Agent container with scoped volume mounts (`/apps` RW, `core/` RO, family data not mounted)
-- [ ] All managed containers labelled `beg-os.managed=true`
-- [ ] FastMCP `/mcp/sse` endpoint with Cloudflare Access auth
-- [ ] MCP tool auto-generation from `mcp_enabled` manifests
-- [ ] Agent subscribed to `system.*` — reads logs, proposes fixes via ntfy.sh, applies on approval
-- [ ] System backup cron script at `/mnt/storage/backups/backup.sh` (weekly, outside platform)
-
-### ⬜ Phase 5: Obsidian Integration
-- [ ] CouchDB service in docker-compose
-- [ ] Observer pattern app reacting to vault file saves
-- [ ] obsidian adapter (`write` → frontmatter + MD, `read` → parsed dict)
-
-### ⬜ Phase 6: Orchestrators
-- [ ] Gmail API connector in `/shared`
-- [ ] Google Drive connector + gdrive adapter (write-through cache)
-- [ ] First Orchestrator app (email attachments or Drive sync)
+</details>
 
 ---
 
@@ -99,7 +81,7 @@ For full technical detail see `docs/tech.spec.md`.
 - [ ] **Notification Service**: Centralized service for ntfy.sh, email, and system alerts.
 - [ ] **Multi-UI Service**: Serve static assets for app dashboards and Obsidian plugins.
 - [ ] **Platform Connectors**: OAuth-managed connectors for Google Drive, Calendar, and Gmail.
-- [ ] **Persistent Bridge**: Migrate Bridge registry from in-memory to Redis Hashes.
+- [x] **Persistent Bridge**: Bridge registry migrated to write-through Redis cache (2026-04-30).
 
 ### 🔮 Phase 3: AI Intelligence
 - [ ] **Admin Agent Evolution**: Enable the agent to auto-install apps from Git URLs.
