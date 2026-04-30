@@ -89,7 +89,9 @@ class BelgradeApp:
                     tenant_id=event.tenant_id,
                     trace_id=event.trace_id,
                     bridge_url=self.bridge_url,
-                    db_url=self.db_url
+                    db_url=self.db_url,
+                    redis_url=self.redis_url,
+                    notification_driver=self.notification_driver,
                 )
                 try:
                     for handler in self.event_handlers[event.topic]:
@@ -136,3 +138,4 @@ class BelgradeApp:
             await self.register_with_bridge()
             
         uvicorn.run(self.app, host=host, port=port)
+       uvicorn.run(self.app, host=host, port=port)
