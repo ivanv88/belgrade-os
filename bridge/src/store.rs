@@ -154,15 +154,14 @@ impl Store for RedisStore {
         let app_tools_key = self.app_tools_key(app_id);
         let app_subs_key = self.app_subs_key(app_id);
 
-        let old_names: Vec<String> = redis::cmd("SMEMBERS")
-            .arg(&app_tools_key)
-            .query_async(&mut *conn)
-            .await?;
-        let old_topics: Vec<String> = redis::cmd("SMEMBERS")
-            .arg(&app_subs_key)
+        // Round-trip 1: pipeline both reverse-index reads together.
+        let (old_names, old_topics): (Vec<String>, Vec<String>) = redis::pipe()
+            .smembers(&app_tools_key)
+            .smembers(&app_subs_key)
             .query_async(&mut *conn)
             .await?;
 
+        // Round-trip 2: pipeline all deletes.
         let mut pipe = redis::pipe();
         for name in &old_names {
             pipe.hdel(self.tools_key(), name).ignore();
@@ -204,7 +203,9 @@ impl Store for RedisStore {
         let strip = self.subs_strip_prefix();
         let mut subscriptions: HashMap<String, Vec<String>> = HashMap::new();
         for key in &topic_keys {
-            let topic = key.strip_prefix(&strip).unwrap_or(key).to_string();
+            let topic = key.strip_prefix(&strip)
+                .expect("KEYS result has wrong prefix — should be unreachable")
+                .to_string();
             let members: Vec<String> = redis::cmd("SMEMBERS")
                 .arg(key)
                 .query_async(&mut *conn)
@@ -341,5 +342,34 @@ mod tests {
         let names: Vec<_> = state.tools.iter().map(|t| t.name.as_str()).collect();
         assert!(names.contains(&"app2:t1"), "app2 should be untouched");
         assert!(state.callbacks.contains_key("app2"));
+    }
+
+    #[tokio::test]
+    async fn test_redis_register_updates_callback_url() {
+        let Some(pool) = try_pool().await else { return; };
+        let store = RedisStore::new_for_test(pool);
+
+        store.register("shopping", "http://old:8000", &[reg("shopping:add_item")])
+            .await.unwrap();
+        store.register("shopping", "http://new:9000", &[reg("shopping:add_item")])
+            .await.unwrap();
+
+        let state = store.hydrate().await.unwrap();
+        assert_eq!(state.callbacks["shopping"], "http://new:9000");
+        assert_eq!(state.tools[0].callback_url, "http://new:9000");
+    }
+
+    #[tokio::test]
+    async fn test_redis_unregister_nonexistent_app_is_noop() {
+        let Some(pool) = try_pool().await else { return; };
+        let store = RedisStore::new_for_test(pool);
+
+        // Unregistering an app that was never registered should succeed silently.
+        let result = store.unregister("ghost_app").await;
+        assert!(result.is_ok());
+
+        let state = store.hydrate().await.unwrap();
+        assert!(state.tools.is_empty());
+        assert!(state.callbacks.is_empty());
     }
 }
