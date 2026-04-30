@@ -6,6 +6,8 @@ import redis.asyncio as aioredis
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine, async_sessionmaker
 from sqlalchemy import text
 
+from . import defaults
+
 logger = logging.getLogger(__name__)
 
 
@@ -18,8 +20,8 @@ class AppContext:
         trace_id: str,
         bridge_url: str,
         db_url: Optional[str] = None,
-        redis_url: str = "redis://localhost:6379",
-        notification_driver: str = "ntfy",
+        redis_url: str = defaults.REDIS_URL,
+        notification_driver: str = defaults.DEFAULT_NOTIFICATION_DRIVER,
     ) -> None:
         self.app_id = app_id
         self.user_id = user_id

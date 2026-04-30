@@ -10,6 +10,7 @@ from fastapi import FastAPI, Request, HTTPException
 
 from .models import RegisterRequest, ToolDefinition, ExecuteRequest, ExecuteResponse, EventPayload
 from .context import AppContext
+from . import defaults
 
 logger = logging.getLogger(__name__)
 
@@ -20,9 +21,11 @@ class BelgradeApp:
         self.tool_definitions: List[ToolDefinition] = []
         self.event_handlers: Dict[str, List[Callable]] = {}
         
-        self.bridge_url = os.getenv("BEG_OS_BRIDGE_URL", "http://localhost:8081")
-        self.db_url = os.getenv("BEG_OS_DB_URL")
-        self.callback_url = os.getenv("BEG_OS_CALLBACK_URL", "http://localhost:9000")
+        self.bridge_url = defaults.BRIDGE_URL
+        self.db_url = defaults.DB_URL
+        self.callback_url = defaults.CALLBACK_URL
+        self.redis_url = defaults.REDIS_URL
+        self.notification_driver = os.getenv("BEG_OS_NOTIFICATION_DRIVER", defaults.DEFAULT_NOTIFICATION_DRIVER)
         
         self.app = FastAPI(title=f"Belgrade App: {app_id}")
         self._setup_routes()
@@ -62,11 +65,13 @@ class BelgradeApp:
             
             ctx = AppContext(
                 app_id=self.app_id,
-                user_id=req.user_id,
+                user_id=req.user_id if hasattr(req, "user_id") else None,
                 tenant_id=req.tenant_id,
                 trace_id=req.trace_id,
                 bridge_url=self.bridge_url,
-                db_url=self.db_url
+                db_url=self.db_url,
+                redis_url=self.redis_url,
+                notification_driver=self.notification_driver,
             )
             
             try:
@@ -138,4 +143,3 @@ class BelgradeApp:
             await self.register_with_bridge()
             
         uvicorn.run(self.app, host=host, port=port)
-       uvicorn.run(self.app, host=host, port=port)

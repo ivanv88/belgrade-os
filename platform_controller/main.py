@@ -35,7 +35,6 @@ class AppProcess:
         manifest_path = self.path / "manifest.json"
         if manifest_path.exists():
             try:
-                import json
                 with open(manifest_path) as f:
                     return json.load(f)
             except Exception:
