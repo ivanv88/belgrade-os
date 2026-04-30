@@ -60,3 +60,19 @@ async def test_ensure_consumer_group_ignores_busygroup():
         side_effect=redis.exceptions.ResponseError("BUSYGROUP Consumer Group name already exists")
     )
     await client.ensure_consumer_group()  # must not raise
+
+
+async def test_read_notification_returns_none_on_empty_messages_list():
+    client, mock_redis = _make_client()
+    mock_redis.xreadgroup = AsyncMock(return_value=[
+        (b"tasks:notifications", [])
+    ])
+    result = await client.read_notification("g", "w1")
+    assert result is None
+
+
+async def test_close_calls_aclose():
+    client, mock_redis = _make_client()
+    mock_redis.aclose = AsyncMock()
+    await client.close()
+    mock_redis.aclose.assert_awaited_once()

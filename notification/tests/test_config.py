@@ -32,3 +32,9 @@ def test_from_env(monkeypatch):
     assert c.ntfy_base_url == "http://ntfy.local"
     assert c.ntfy_topic == "my-house"
     assert c.notification_driver == "firebase"
+
+
+def test_load_config_returns_config_instance():
+    from config import load_config
+    cfg = load_config()
+    assert isinstance(cfg, Config)
