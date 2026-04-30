@@ -2,12 +2,14 @@ use axum::{extract::State, http::StatusCode, response::Json, routing::{get, post
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use crate::{config::Config, registry::{ToolRegistration, ToolRegistry}};
+use crate::store::{NoopStore, Store};
 
 #[derive(Clone)]
 pub struct AppState {
     pub registry: Arc<ToolRegistry>,
     pub config: Arc<Config>,
     pub http: reqwest::Client,
+    pub store: Arc<dyn Store>,
 }
 
 #[derive(Deserialize)]
@@ -83,15 +85,29 @@ async fn handle_register(
     }
     let registrations: Vec<ToolRegistration> = req
         .tools
-        .into_iter()
+        .iter()
         .map(|t| ToolRegistration {
-            name: t.name,
-            description: t.description,
-            input_schema_json: t.input_schema_json,
+            name: t.name.clone(),
+            description: t.description.clone(),
+            input_schema_json: t.input_schema_json.clone(),
         })
         .collect();
-    state.registry.register(&req.app_id, &req.callback_url, &registrations);
 
+    // Store writes first — if persistence fails, in-memory is not updated.
+    state.store
+        .register(&req.app_id, &req.callback_url, &registrations)
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+    if let Some(ref subs) = req.subscriptions {
+        state.store
+            .subscribe(&req.app_id, subs)
+            .await
+            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    }
+
+    // In-memory updates — infallible, always follow successful store writes.
+    state.registry.register(&req.app_id, &req.callback_url, &registrations);
     if let Some(subs) = req.subscriptions {
         state.registry.subscribe(&req.app_id, subs);
     }
@@ -221,8 +237,12 @@ async fn handle_notifications_provider(
     })
 }
 
-pub fn create_router(registry: Arc<ToolRegistry>, config: Arc<Config>) -> Router {
-    let state = AppState { registry, config, http: reqwest::Client::new() };
+pub fn create_router(
+    registry: Arc<ToolRegistry>,
+    config: Arc<Config>,
+    store: Arc<dyn Store>,
+) -> Router {
+    let state = AppState { registry, config, http: reqwest::Client::new(), store };
     Router::new()
         .route("/v1/register", post(handle_register))
         .route("/v1/tools", get(handle_tools))
@@ -248,10 +268,14 @@ mod tests {
         })
     }
 
+    fn make_router(registry: Arc<ToolRegistry>) -> Router {
+        create_router(registry, make_config(), Arc::new(NoopStore))
+    }
+
     #[tokio::test]
     async fn test_tools_empty_on_start() {
         let registry = Arc::new(ToolRegistry::new());
-        let app = create_router(Arc::clone(&registry), make_config());
+        let app = make_router(Arc::clone(&registry));
 
         let resp = app
             .oneshot(Request::builder().uri("/v1/tools").body(Body::empty()).unwrap())
@@ -266,7 +290,7 @@ mod tests {
     #[tokio::test]
     async fn test_register_returns_204() {
         let registry = Arc::new(ToolRegistry::new());
-        let app = create_router(Arc::clone(&registry), make_config());
+        let app = make_router(Arc::clone(&registry));
 
         let body = serde_json::json!({
             "app_id": "shopping",
@@ -297,7 +321,7 @@ mod tests {
             "callback_url": "http://app:8000",
             "tools": [{"name": "shopping:add_item", "description": "Add item", "input_schema_json": "{}"}]
         });
-        create_router(Arc::clone(&registry), Arc::clone(&config))
+        create_router(Arc::clone(&registry), Arc::clone(&config), Arc::new(NoopStore))
             .oneshot(
                 Request::builder()
                     .method("POST")
@@ -309,7 +333,7 @@ mod tests {
             .await
             .unwrap();
 
-        let list_resp = create_router(Arc::clone(&registry), Arc::clone(&config))
+        let list_resp = create_router(Arc::clone(&registry), Arc::clone(&config), Arc::new(NoopStore))
             .oneshot(Request::builder().uri("/v1/tools").body(Body::empty()).unwrap())
             .await
             .unwrap();
@@ -323,7 +347,7 @@ mod tests {
     #[tokio::test]
     async fn test_notifications_provider_returns_config() {
         let registry = Arc::new(ToolRegistry::new());
-        let app = create_router(Arc::clone(&registry), make_config());
+        let app = make_router(Arc::clone(&registry));
 
         let resp = app
             .oneshot(
@@ -345,7 +369,7 @@ mod tests {
     #[tokio::test]
     async fn test_register_bad_tool_name_returns_400() {
         let registry = Arc::new(ToolRegistry::new());
-        let app = create_router(Arc::clone(&registry), make_config());
+        let app = make_router(Arc::clone(&registry));
 
         let body = serde_json::json!({
             "app_id": "shopping",
@@ -369,7 +393,7 @@ mod tests {
     #[tokio::test]
     async fn test_execute_unknown_tool_returns_error() {
         let registry = Arc::new(ToolRegistry::new());
-        let app = create_router(Arc::clone(&registry), make_config());
+        let app = make_router(Arc::clone(&registry));
 
         let body = serde_json::json!({
             "call_id": "c1", "task_id": "t1",
@@ -423,7 +447,7 @@ mod tests {
                 input_schema_json: "{}".to_string(),
             }],
         );
-        let app = create_router(Arc::clone(&registry), make_config());
+        let app = make_router(Arc::clone(&registry));
 
         let body = serde_json::json!({
             "call_id": "c1", "task_id": "t1",
@@ -463,7 +487,7 @@ mod tests {
                 input_schema_json: "{}".to_string(),
             }],
         );
-        let app = create_router(Arc::clone(&registry), make_config());
+        let app = make_router(Arc::clone(&registry));
 
         let body = serde_json::json!({
             "call_id": "c1", "task_id": "t1",
@@ -522,7 +546,7 @@ mod tests {
                 input_schema_json: "{}".to_string(),
             }],
         );
-        let app = create_router(Arc::clone(&registry), make_config());
+        let app = make_router(Arc::clone(&registry));
 
         let body = serde_json::json!({
             "call_id": "c1", "task_id": "t1",
@@ -570,7 +594,7 @@ mod tests {
         registry.register("receiver", &mock_server.uri(), &[]);
         registry.subscribe("receiver", vec!["test.topic".to_string()]);
 
-        let app = create_router(Arc::clone(&registry), make_config());
+        let app = make_router(Arc::clone(&registry));
 
         let body = serde_json::json!({
             "topic": "test.topic",
@@ -600,7 +624,7 @@ mod tests {
     #[tokio::test]
     async fn test_publish_no_subscribers_is_accepted() {
         let registry = Arc::new(ToolRegistry::new());
-        let app = create_router(Arc::clone(&registry), make_config());
+        let app = make_router(Arc::clone(&registry));
 
         let body = serde_json::json!({
             "topic": "unknown.topic",

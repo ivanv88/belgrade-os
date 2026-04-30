@@ -18,7 +18,7 @@ async fn main() {
     let registry = Arc::new(registry::ToolRegistry::new());
     let addr = format!("0.0.0.0:{}", cfg.port);
 
-    let app = router::create_router(Arc::clone(&registry), Arc::clone(&cfg));
+    let app = router::create_router(Arc::clone(&registry), Arc::clone(&cfg), Arc::new(store::NoopStore));
 
     tracing::info!(port = cfg.port, "capability bridge listening");
     let listener = tokio::net::TcpListener::bind(&addr)
