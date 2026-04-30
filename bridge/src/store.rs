@@ -98,27 +98,123 @@ impl RedisStore {
 
     #[cfg(test)]
     pub fn new_for_test(pool: deadpool_redis::Pool) -> Self {
-        let nanos = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .subsec_nanos();
-        Self { pool, prefix: format!("test:{}:", nanos) }
+        use std::sync::atomic::{AtomicU64, Ordering};
+        static COUNTER: AtomicU64 = AtomicU64::new(0);
+        let id = COUNTER.fetch_add(1, Ordering::Relaxed);
+        let pid = std::process::id();
+        Self { pool, prefix: format!("test:{}:{}:", pid, id) }
     }
 }
 
 #[async_trait]
 impl Store for RedisStore {
-    async fn register(&self, _: &str, _: &str, _: &[ToolRegistration]) -> Result<(), StoreError> {
-        todo!()
+    async fn register(
+        &self,
+        app_id: &str,
+        callback_url: &str,
+        tools: &[ToolRegistration],
+    ) -> Result<(), StoreError> {
+        let mut conn = self.pool.get().await?;
+        let app_tools_key = self.app_tools_key(app_id);
+
+        // Round-trip 1: get old tool names via reverse index.
+        let old_names: Vec<String> = redis::cmd("SMEMBERS")
+            .arg(&app_tools_key)
+            .query_async(&mut *conn)
+            .await?;
+
+        // Round-trip 2: pipeline all writes.
+        let mut pipe = redis::pipe();
+        pipe.hset(self.callbacks_key(), app_id, callback_url).ignore();
+        for name in &old_names {
+            pipe.hdel(self.tools_key(), name).ignore();
+        }
+        pipe.del(&app_tools_key).ignore();
+        for t in tools {
+            let tool = RegisteredTool {
+                name: t.name.clone(),
+                description: t.description.clone(),
+                input_schema_json: t.input_schema_json.clone(),
+                app_id: app_id.to_string(),
+                callback_url: callback_url.to_string(),
+            };
+            pipe.hset(self.tools_key(), &t.name, serde_json::to_string(&tool)?).ignore();
+            pipe.sadd(&app_tools_key, &t.name).ignore();
+        }
+        pipe.query_async::<_, ()>(&mut *conn).await?;
+        Ok(())
     }
+
     async fn subscribe(&self, _: &str, _: &[String]) -> Result<(), StoreError> {
         todo!()
     }
-    async fn unregister(&self, _: &str) -> Result<(), StoreError> {
-        todo!()
+
+    async fn unregister(&self, app_id: &str) -> Result<(), StoreError> {
+        let mut conn = self.pool.get().await?;
+        let app_tools_key = self.app_tools_key(app_id);
+        let app_subs_key = self.app_subs_key(app_id);
+
+        let old_names: Vec<String> = redis::cmd("SMEMBERS")
+            .arg(&app_tools_key)
+            .query_async(&mut *conn)
+            .await?;
+        let old_topics: Vec<String> = redis::cmd("SMEMBERS")
+            .arg(&app_subs_key)
+            .query_async(&mut *conn)
+            .await?;
+
+        let mut pipe = redis::pipe();
+        for name in &old_names {
+            pipe.hdel(self.tools_key(), name).ignore();
+        }
+        pipe.del(&app_tools_key).ignore();
+        pipe.hdel(self.callbacks_key(), app_id).ignore();
+        for topic in &old_topics {
+            pipe.srem(self.subs_key(topic), app_id).ignore();
+        }
+        pipe.del(&app_subs_key).ignore();
+        pipe.query_async::<_, ()>(&mut *conn).await?;
+        Ok(())
     }
+
     async fn hydrate(&self) -> Result<HydratedState, StoreError> {
-        todo!()
+        let mut conn = self.pool.get().await?;
+
+        let raw_tools: HashMap<String, String> = redis::cmd("HGETALL")
+            .arg(self.tools_key())
+            .query_async(&mut *conn)
+            .await?;
+        let tools: Vec<RegisteredTool> = raw_tools
+            .values()
+            .map(|v| serde_json::from_str(v))
+            .collect::<Result<_, _>>()?;
+
+        let callbacks: HashMap<String, String> = redis::cmd("HGETALL")
+            .arg(self.callbacks_key())
+            .query_async(&mut *conn)
+            .await?;
+
+        // NOTE: KEYS blocks Redis while scanning. Fine for a small personal system.
+        // Production would use SCAN with a cursor.
+        let topic_keys: Vec<String> = redis::cmd("KEYS")
+            .arg(self.subs_pattern())
+            .query_async(&mut *conn)
+            .await?;
+
+        let strip = self.subs_strip_prefix();
+        let mut subscriptions: HashMap<String, Vec<String>> = HashMap::new();
+        for key in &topic_keys {
+            let topic = key.strip_prefix(&strip).unwrap_or(key).to_string();
+            let members: Vec<String> = redis::cmd("SMEMBERS")
+                .arg(key)
+                .query_async(&mut *conn)
+                .await?;
+            if !members.is_empty() {
+                subscriptions.insert(topic, members);
+            }
+        }
+
+        Ok(HydratedState { tools, callbacks, subscriptions })
     }
 }
 
@@ -142,5 +238,108 @@ mod tests {
         assert!(state.tools.is_empty());
         assert!(state.callbacks.is_empty());
         assert!(state.subscriptions.is_empty());
+    }
+
+    // ── helpers ──────────────────────────────────────────────────────────────
+
+    async fn try_pool() -> Option<deadpool_redis::Pool> {
+        let cfg = deadpool_redis::Config::from_url("redis://localhost:6379");
+        let pool = cfg.create_pool(Some(deadpool_redis::Runtime::Tokio1)).ok()?;
+        let mut conn = pool.get().await.ok()?;
+        redis::cmd("PING").query_async::<_, ()>(&mut *conn).await.ok()?;
+        Some(pool)
+    }
+
+    fn reg(name: &str) -> ToolRegistration {
+        ToolRegistration {
+            name: name.to_string(),
+            description: "desc".to_string(),
+            input_schema_json: "{}".to_string(),
+        }
+    }
+
+    // ── register tests ───────────────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn test_redis_register_persists_tool() {
+        let Some(pool) = try_pool().await else { return; };
+        let store = RedisStore::new_for_test(pool);
+
+        store.register("shopping", "http://app:8000", &[reg("shopping:add_item")])
+            .await.unwrap();
+
+        let state = store.hydrate().await.unwrap();
+        assert_eq!(state.tools.len(), 1);
+        assert_eq!(state.tools[0].name, "shopping:add_item");
+        assert_eq!(state.tools[0].callback_url, "http://app:8000");
+        assert_eq!(state.callbacks["shopping"], "http://app:8000");
+    }
+
+    #[tokio::test]
+    async fn test_redis_register_replaces_old_tools() {
+        let Some(pool) = try_pool().await else { return; };
+        let store = RedisStore::new_for_test(pool);
+
+        store.register("shopping", "http://app:8000", &[reg("shopping:old")])
+            .await.unwrap();
+        store.register("shopping", "http://app:8000", &[reg("shopping:new")])
+            .await.unwrap();
+
+        let state = store.hydrate().await.unwrap();
+        let names: Vec<_> = state.tools.iter().map(|t| t.name.as_str()).collect();
+        assert!(!names.contains(&"shopping:old"), "old tool should be gone");
+        assert!(names.contains(&"shopping:new"));
+    }
+
+    #[tokio::test]
+    async fn test_redis_register_does_not_affect_other_apps() {
+        let Some(pool) = try_pool().await else { return; };
+        let store = RedisStore::new_for_test(pool);
+
+        store.register("app1", "http://app1:8000", &[reg("app1:t1")])
+            .await.unwrap();
+        store.register("app2", "http://app2:8000", &[reg("app2:t1")])
+            .await.unwrap();
+        store.register("app1", "http://app1:8000", &[reg("app1:t2")])
+            .await.unwrap();
+
+        let state = store.hydrate().await.unwrap();
+        let names: Vec<_> = state.tools.iter().map(|t| t.name.as_str()).collect();
+        assert!(!names.contains(&"app1:t1"));
+        assert!(names.contains(&"app1:t2"));
+        assert!(names.contains(&"app2:t1"), "app2 should be untouched");
+    }
+
+    // ── unregister tests ─────────────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn test_redis_unregister_removes_all_app_state() {
+        let Some(pool) = try_pool().await else { return; };
+        let store = RedisStore::new_for_test(pool);
+
+        store.register("shopping", "http://app:8000", &[reg("shopping:add_item")])
+            .await.unwrap();
+        store.unregister("shopping").await.unwrap();
+
+        let state = store.hydrate().await.unwrap();
+        assert!(state.tools.is_empty());
+        assert!(!state.callbacks.contains_key("shopping"));
+    }
+
+    #[tokio::test]
+    async fn test_redis_unregister_does_not_affect_other_apps() {
+        let Some(pool) = try_pool().await else { return; };
+        let store = RedisStore::new_for_test(pool);
+
+        store.register("app1", "http://app1:8000", &[reg("app1:t1")])
+            .await.unwrap();
+        store.register("app2", "http://app2:8000", &[reg("app2:t1")])
+            .await.unwrap();
+        store.unregister("app1").await.unwrap();
+
+        let state = store.hydrate().await.unwrap();
+        let names: Vec<_> = state.tools.iter().map(|t| t.name.as_str()).collect();
+        assert!(names.contains(&"app2:t1"), "app2 should be untouched");
+        assert!(state.callbacks.contains_key("app2"));
     }
 }
