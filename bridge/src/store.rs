@@ -155,6 +155,11 @@ impl Store for RedisStore {
             .query_async(&mut *conn)
             .await?;
 
+        // NOTE: subscribe() intentionally does not check whether app_id exists in
+        // bridge:callbacks. Stale subscription keys for unknown apps are harmless —
+        // registry.get_subscribers() filters them out at read time because they
+        // have no callback entry. Apps should always call register() before subscribe().
+
         // Round-trip 2: pipeline authoritative replace.
         let mut pipe = redis::pipe();
 
@@ -443,6 +448,26 @@ mod tests {
         let state = store.hydrate().await.unwrap();
         let subs = state.subscriptions.get("price.update").unwrap();
         assert_eq!(subs.iter().filter(|s| *s == "app1").count(), 1);
+    }
+
+    #[tokio::test]
+    async fn test_redis_subscribe_empty_topics_clears_all() {
+        let Some(pool) = try_pool().await else { return; };
+        let store = RedisStore::new_for_test(pool);
+
+        store.register("app1", "http://app1:8000", &[]).await.unwrap();
+        store.subscribe("app1", &["topic1".to_string(), "topic2".to_string()]).await.unwrap();
+        store.subscribe("app1", &[]).await.unwrap(); // unsubscribe from everything
+
+        let state = store.hydrate().await.unwrap();
+        assert!(
+            state.subscriptions.get("topic1").map(|v| v.is_empty()).unwrap_or(true),
+            "topic1 should have no subscribers"
+        );
+        assert!(
+            state.subscriptions.get("topic2").map(|v| v.is_empty()).unwrap_or(true),
+            "topic2 should have no subscribers"
+        );
     }
 
     #[tokio::test]
