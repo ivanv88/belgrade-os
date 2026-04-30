@@ -6,6 +6,7 @@ from .base import NotificationDriver
 # Maps proto NotificationPriority values to ntfy priority integers.
 # ntfy scale: 1=min, 2=low, 3=default, 4=high, 5=urgent
 _PRIORITY_MAP: dict[int, str] = {
+    belgrade_os_pb2.NOTIFICATION_PRIORITY_UNSPECIFIED: "3",
     belgrade_os_pb2.NOTIFICATION_LOW: "2",
     belgrade_os_pb2.NOTIFICATION_NORMAL: "3",
     belgrade_os_pb2.NOTIFICATION_HIGH: "5",

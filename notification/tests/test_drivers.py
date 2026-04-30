@@ -41,6 +41,7 @@ async def test_ntfy_driver_posts_to_correct_url():
     headers = call_kwargs.kwargs["headers"]
     assert headers["Title"] == "Goal reached"
     assert headers["Priority"] == "3"  # NOTIFICATION_NORMAL maps to ntfy default (3)
+    mock_resp.raise_for_status.assert_called_once()
 
 
 async def test_ntfy_driver_maps_low_priority():
@@ -121,3 +122,57 @@ def test_get_driver_raises_on_unknown():
     cfg = Config(notification_driver="unknown_driver", _env_file=None)
     with pytest.raises(ValueError, match="Unknown notification driver"):
         get_driver(cfg)
+
+
+async def test_ntfy_driver_propagates_http_error():
+    import httpx
+    driver = NtfyDriver(base_url="http://ntfy.local", topic="house")
+    req = _make_req()
+
+    with patch("drivers.ntfy.httpx.AsyncClient") as mock_client_cls:
+        mock_client = AsyncMock()
+        mock_client_cls.return_value.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client_cls.return_value.__aexit__ = AsyncMock(return_value=False)
+        mock_resp = MagicMock()
+        mock_resp.raise_for_status.side_effect = httpx.HTTPStatusError(
+            "500", request=MagicMock(), response=MagicMock()
+        )
+        mock_client.post = AsyncMock(return_value=mock_resp)
+
+        with pytest.raises(httpx.HTTPStatusError):
+            await driver.send(req)
+
+
+async def test_ntfy_driver_strips_trailing_slash_from_base_url():
+    driver = NtfyDriver(base_url="http://ntfy.local/", topic="house")
+    req = _make_req()
+
+    with patch("drivers.ntfy.httpx.AsyncClient") as mock_client_cls:
+        mock_client = AsyncMock()
+        mock_client_cls.return_value.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client_cls.return_value.__aexit__ = AsyncMock(return_value=False)
+        mock_resp = MagicMock()
+        mock_resp.raise_for_status = MagicMock()
+        mock_client.post = AsyncMock(return_value=mock_resp)
+        await driver.send(req)
+
+    url = mock_client.post.await_args.args[0]
+    assert url == "http://ntfy.local/house"
+    assert "//" not in url.replace("http://", "")
+
+
+async def test_ntfy_driver_maps_unspecified_priority_to_normal():
+    driver = NtfyDriver(base_url="http://ntfy.local", topic="house")
+    req = _make_req(priority=belgrade_os_pb2.NOTIFICATION_PRIORITY_UNSPECIFIED)
+
+    with patch("drivers.ntfy.httpx.AsyncClient") as mock_client_cls:
+        mock_client = AsyncMock()
+        mock_client_cls.return_value.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client_cls.return_value.__aexit__ = AsyncMock(return_value=False)
+        mock_resp = MagicMock()
+        mock_resp.raise_for_status = MagicMock()
+        mock_client.post = AsyncMock(return_value=mock_resp)
+        await driver.send(req)
+
+    headers = mock_client.post.await_args.kwargs["headers"]
+    assert headers["Priority"] == "3"  # unspecified → default (normal)
