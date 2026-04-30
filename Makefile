@@ -10,7 +10,7 @@ deps:
 	pip3 install -r runner/requirements-dev.txt -r inference/requirements-dev.txt
 
 # ─── Proto codegen ────────────────────────────────────────────────────────────
-proto: gateway/gen/belgrade_os.pb.go runner/gen/belgrade_os_pb2.py inference/gen/belgrade_os_pb2.py
+proto: gateway/gen/belgrade_os.pb.go runner/gen/belgrade_os_pb2.py inference/gen/belgrade_os_pb2.py notification/gen/belgrade_os_pb2.py sdk/belgrade_sdk/gen/belgrade_os_pb2.py
 	@echo "proto codegen complete"
 
 gateway/gen/belgrade_os.pb.go: $(PROTO_SRC)
@@ -30,6 +30,16 @@ inference/gen/belgrade_os_pb2.py: $(PROTO_SRC)
 	touch inference/gen/__init__.py
 	python3 -m grpc_tools.protoc -Iproto --python_out=inference/gen $(PROTO_SRC)
 
+notification/gen/belgrade_os_pb2.py: $(PROTO_SRC)
+	mkdir -p notification/gen
+	touch notification/gen/__init__.py
+	python3 -m grpc_tools.protoc -Iproto --python_out=notification/gen $(PROTO_SRC)
+
+sdk/belgrade_sdk/gen/belgrade_os_pb2.py: $(PROTO_SRC)
+	mkdir -p sdk/belgrade_sdk/gen
+	touch sdk/belgrade_sdk/gen/__init__.py
+	python3 -m grpc_tools.protoc -Iproto --python_out=sdk/belgrade_sdk/gen $(PROTO_SRC)
+
 # Rust codegen runs via bridge/build.rs — no explicit Make target needed.
 
 # ─── Build ────────────────────────────────────────────────────────────────────
@@ -42,6 +52,7 @@ test: proto
 	cd gateway && go test ./... -v
 	cd runner && python3 -m pytest tests/ -v
 	cd inference && python3 -m pytest tests/ -v
+	cd notification && python3 -m pytest tests/ -v
 	cd bridge && cargo test
 
 # ─── Dev infrastructure ───────────────────────────────────────────────────────
@@ -53,4 +64,6 @@ clean:
 	rm -f gateway/gen/belgrade_os.pb.go
 	rm -f runner/gen/belgrade_os_pb2.py runner/gen/belgrade_os_pb2_grpc.py
 	rm -f inference/gen/belgrade_os_pb2.py inference/gen/belgrade_os_pb2_grpc.py
+	rm -f notification/gen/belgrade_os_pb2.py notification/gen/belgrade_os_pb2_grpc.py
+	rm -f sdk/belgrade_sdk/gen/belgrade_os_pb2.py sdk/belgrade_sdk/gen/belgrade_os_pb2_grpc.py
 	cd bridge && cargo clean
