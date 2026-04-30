@@ -12,6 +12,10 @@ reqwest = { version = "0.12", features = ["json"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 prost = "0.12"
+redis = { version = "0.25", features = ["tokio-comp"] }
+deadpool-redis = { version = "0.15", features = ["rt_tokio_1"] }
+async-trait = "0.1"
+thiserror = "1"
 
 [build-dependencies]
 prost-build = "0.12"

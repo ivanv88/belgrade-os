@@ -3,6 +3,7 @@ pub struct Config {
     pub port: u16,
     pub ntfy_base_url: String,
     pub ntfy_topic: String,
+    pub redis_url: String,
 }
 
 impl Config {
@@ -23,6 +24,8 @@ impl Config {
                 .unwrap_or_else(|| "https://ntfy.sh".to_string()),
             ntfy_topic: lookup("NTFY_TOPIC")
                 .unwrap_or_else(|| "belgrade-os".to_string()),
+            redis_url: lookup("REDIS_URL")
+                .unwrap_or_else(|| "redis://localhost:6379".to_string()),
         }
     }
 }
@@ -60,5 +63,17 @@ mod tests {
         let cfg = Config::from_map(lookup(&[("NTFY_BASE_URL", "http://localhost:8088")]));
         assert_eq!(cfg.ntfy_base_url, "http://localhost:8088");
         assert_eq!(cfg.port, 8081);
+    }
+
+    #[test]
+    fn test_redis_url_default() {
+        let cfg = Config::from_map(lookup(&[]));
+        assert_eq!(cfg.redis_url, "redis://localhost:6379");
+    }
+
+    #[test]
+    fn test_redis_url_from_env() {
+        let cfg = Config::from_map(lookup(&[("REDIS_URL", "redis://redis:6379")]));
+        assert_eq!(cfg.redis_url, "redis://redis:6379");
     }
 }

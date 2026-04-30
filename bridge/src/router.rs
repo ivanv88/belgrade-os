@@ -244,6 +244,7 @@ mod tests {
             port: 8081,
             ntfy_base_url: "https://ntfy.sh".to_string(),
             ntfy_topic: "test-topic".to_string(),
+            redis_url: "redis://localhost:6379".to_string(),
         })
     }
 
