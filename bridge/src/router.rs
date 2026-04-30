@@ -99,6 +99,12 @@ async fn handle_register(
         .await
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
+    // NOTE: If register succeeded but subscribe fails below, Redis has the tool
+    // registration but in-memory does not. The caller will receive a 500 and
+    // retry; the retry re-runs register (idempotent) then subscribe. On bridge
+    // restart, hydrate() will restore the Redis state. This is an acceptable
+    // window for a personal system; a production fix would batch both writes
+    // into a single Redis pipeline.
     if let Some(ref subs) = req.subscriptions {
         state.store
             .subscribe(&req.app_id, subs)
@@ -314,14 +320,13 @@ mod tests {
     #[tokio::test]
     async fn test_register_then_tools_lists_tool() {
         let registry = Arc::new(ToolRegistry::new());
-        let config = make_config();
 
         let register_body = serde_json::json!({
             "app_id": "shopping",
             "callback_url": "http://app:8000",
             "tools": [{"name": "shopping:add_item", "description": "Add item", "input_schema_json": "{}"}]
         });
-        create_router(Arc::clone(&registry), Arc::clone(&config), Arc::new(NoopStore))
+        make_router(Arc::clone(&registry))
             .oneshot(
                 Request::builder()
                     .method("POST")
@@ -333,7 +338,7 @@ mod tests {
             .await
             .unwrap();
 
-        let list_resp = create_router(Arc::clone(&registry), Arc::clone(&config), Arc::new(NoopStore))
+        let list_resp = make_router(Arc::clone(&registry))
             .oneshot(Request::builder().uri("/v1/tools").body(Body::empty()).unwrap())
             .await
             .unwrap();
