@@ -145,8 +145,32 @@ impl Store for RedisStore {
         Ok(())
     }
 
-    async fn subscribe(&self, _: &str, _: &[String]) -> Result<(), StoreError> {
-        todo!()
+    async fn subscribe(&self, app_id: &str, topics: &[String]) -> Result<(), StoreError> {
+        let mut conn = self.pool.get().await?;
+        let app_subs_key = self.app_subs_key(app_id);
+
+        // Round-trip 1: get current subscription set for this app.
+        let old_topics: Vec<String> = redis::cmd("SMEMBERS")
+            .arg(&app_subs_key)
+            .query_async(&mut *conn)
+            .await?;
+
+        // Round-trip 2: pipeline authoritative replace.
+        let mut pipe = redis::pipe();
+
+        for topic in &old_topics {
+            pipe.srem(self.subs_key(topic), app_id).ignore();
+        }
+        pipe.del(&app_subs_key).ignore();
+
+        for topic in topics {
+            // Redis Sets deduplicate naturally — SADD is idempotent.
+            pipe.sadd(self.subs_key(topic), app_id).ignore();
+            pipe.sadd(&app_subs_key, topic).ignore();
+        }
+
+        pipe.query_async::<_, ()>(&mut *conn).await?;
+        Ok(())
     }
 
     async fn unregister(&self, app_id: &str) -> Result<(), StoreError> {
@@ -371,5 +395,98 @@ mod tests {
         let state = store.hydrate().await.unwrap();
         assert!(state.tools.is_empty());
         assert!(state.callbacks.is_empty());
+    }
+
+    // ── subscribe ────────────────────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn test_redis_subscribe_persists_topic() {
+        let Some(pool) = try_pool().await else { return; };
+        let store = RedisStore::new_for_test(pool);
+
+        store.register("app1", "http://app1:8000", &[]).await.unwrap();
+        store.subscribe("app1", &["price.update".to_string()]).await.unwrap();
+
+        let state = store.hydrate().await.unwrap();
+        let subs = state.subscriptions.get("price.update").expect("topic missing");
+        assert!(subs.contains(&"app1".to_string()));
+    }
+
+    #[tokio::test]
+    async fn test_redis_subscribe_is_authoritative_replace() {
+        let Some(pool) = try_pool().await else { return; };
+        let store = RedisStore::new_for_test(pool);
+
+        store.register("app1", "http://app1:8000", &[]).await.unwrap();
+        store.subscribe("app1", &["topic1".to_string(), "topic2".to_string()]).await.unwrap();
+        // Re-subscribe with narrower set
+        store.subscribe("app1", &["topic2".to_string()]).await.unwrap();
+
+        let state = store.hydrate().await.unwrap();
+        assert!(
+            state.subscriptions.get("topic1").map(|v| v.is_empty()).unwrap_or(true),
+            "app1 should no longer be subscribed to topic1"
+        );
+        let subs2 = state.subscriptions.get("topic2").expect("topic2 missing");
+        assert!(subs2.contains(&"app1".to_string()));
+    }
+
+    #[tokio::test]
+    async fn test_redis_subscribe_does_not_duplicate() {
+        let Some(pool) = try_pool().await else { return; };
+        let store = RedisStore::new_for_test(pool);
+
+        store.register("app1", "http://app1:8000", &[]).await.unwrap();
+        store.subscribe("app1", &["price.update".to_string()]).await.unwrap();
+        store.subscribe("app1", &["price.update".to_string()]).await.unwrap();
+
+        let state = store.hydrate().await.unwrap();
+        let subs = state.subscriptions.get("price.update").unwrap();
+        assert_eq!(subs.iter().filter(|s| *s == "app1").count(), 1);
+    }
+
+    #[tokio::test]
+    async fn test_redis_unregister_removes_subscriptions() {
+        let Some(pool) = try_pool().await else { return; };
+        let store = RedisStore::new_for_test(pool);
+
+        store.register("app1", "http://app1:8000", &[]).await.unwrap();
+        store.subscribe("app1", &["price.update".to_string()]).await.unwrap();
+        store.unregister("app1").await.unwrap();
+
+        let state = store.hydrate().await.unwrap();
+        assert!(
+            state.subscriptions.get("price.update").map(|v| v.is_empty()).unwrap_or(true),
+            "subscriptions should be cleaned up on unregister"
+        );
+    }
+
+    // ── hydrate ──────────────────────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn test_redis_hydrate_empty_store() {
+        let Some(pool) = try_pool().await else { return; };
+        let store = RedisStore::new_for_test(pool);
+
+        let state = store.hydrate().await.unwrap();
+        assert!(state.tools.is_empty());
+        assert!(state.callbacks.is_empty());
+        assert!(state.subscriptions.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_redis_hydrate_full_state() {
+        let Some(pool) = try_pool().await else { return; };
+        let store = RedisStore::new_for_test(pool);
+
+        store.register("shopping", "http://shopping:8000", &[reg("shopping:add_item")])
+            .await.unwrap();
+        store.subscribe("shopping", &["price.update".to_string()])
+            .await.unwrap();
+
+        let state = store.hydrate().await.unwrap();
+        assert_eq!(state.tools.len(), 1);
+        assert_eq!(state.callbacks["shopping"], "http://shopping:8000");
+        assert!(state.subscriptions["price.update"].contains(&"shopping".to_string()));
     }
 }
