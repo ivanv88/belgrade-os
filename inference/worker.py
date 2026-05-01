@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import httpx
 import os
 from typing import Optional
@@ -8,6 +9,8 @@ from typing import Optional
 from gen import belgrade_os_pb2
 from providers.base import InferenceProvider, StreamDone, TextChunk, ToolUse
 from redis_client import RedisClient
+
+log = logging.getLogger(__name__)
 
 CONSUMER_GROUP = "inference"
 BRIDGE_URL = os.getenv("BEG_OS_BRIDGE_URL", "http://localhost:8081")
@@ -30,7 +33,7 @@ async def fetch_tools() -> list:
                 for t in tools_data
             ]
     except Exception as e:
-        print(f"Failed to fetch tools from bridge: {e}")
+        log.warning("Failed to fetch tools from bridge: %s", e)
         return []
 
 async def process_task(

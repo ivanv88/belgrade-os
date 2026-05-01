@@ -71,9 +71,10 @@ make clean
 # Go (Gateway)
 cd gateway && go test ./... -v
 
-# Python (Inference/Runner)
+# Python (Inference/Runner/Notification)
 cd runner && python3 -m pytest tests/ -v
 cd inference && python3 -m pytest tests/ -v
+cd notification && python3 -m pytest tests/ -v
 
 # Rust (Bridge)
 cd bridge && cargo test
@@ -102,3 +103,4 @@ All inter-service message shapes are defined in `proto/belgrade_os.proto`. **Nev
 *   **Authentication**: Gateway validates `Cf-Access-Jwt-Assertion` (RS256 JWT from Cloudflare Zero Trust).
 *   **Secrets**: Managed via `.env` files; never commit secrets to the repository.
 *   **Local Dev**: Redis-dependent tests should skip gracefully if Redis is unavailable.
+sts should skip gracefully if Redis is unavailable.

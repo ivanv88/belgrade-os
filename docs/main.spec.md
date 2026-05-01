@@ -78,12 +78,15 @@ For full technical detail see `docs/tech.spec.md`.
 - [x] **Identity Loop**: Propagation of user_id/tenant_id for scoped DB/Notify.
 
 ### 🚀 Phase 2: The Nervous System (Next)
-- [ ] **Notification Service**: Centralized service for ntfy.sh, email, and system alerts.
 - [ ] **Multi-UI Service**: Serve static assets for app dashboards and Obsidian plugins.
 - [ ] **Platform Connectors**: OAuth-managed connectors for Google Drive, Calendar, and Gmail.
-- [x] **Persistent Bridge**: Bridge registry migrated to write-through Redis cache (2026-04-30).
+- [ ] **Stateful Workflows**: Built-in support for long-running multi-app sequences.
 
 ### 🔮 Phase 3: AI Intelligence
 - [ ] **Admin Agent Evolution**: Enable the agent to auto-install apps from Git URLs.
+- [ ] **Self-Healing**: Agent monitoring of app.log to fix bugs automatically.
+- [ ] **Workflow Orchestrator**: LLM-driven complex multi-app sequences.
+**: LLM-driven complex multi-app sequences.
+s from Git URLs.
 - [ ] **Self-Healing**: Agent monitoring of app.log to fix bugs automatically.
 - [ ] **Workflow Orchestrator**: LLM-driven complex multi-app sequences.
