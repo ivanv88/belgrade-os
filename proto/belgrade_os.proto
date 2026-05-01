@@ -89,3 +89,25 @@ message WorkerLease {
   int64  leased_at_ms  = 4;
   int64  expires_at_ms = 5;
 }
+
+// ─── Notification Service ─────────────────────────────────────────────────────────
+
+enum NotificationPriority {
+  NOTIFICATION_PRIORITY_UNSPECIFIED = 0;
+  NOTIFICATION_LOW    = 1;
+  NOTIFICATION_NORMAL = 2;
+  NOTIFICATION_HIGH   = 3;
+}
+
+// SDK → Redis Stream "tasks:notifications" → Notification Service
+message NotificationRequest {
+  string               trace_id  = 1;  // propagated from the originating Task
+  string               app_id    = 2;  // origin app (e.g. "shopping")
+  string               user_id   = 3;  // propagated from AppContext
+  string               title     = 4;
+  string               body      = 5;
+  NotificationPriority priority  = 6;
+  string               driver    = 7;  // "ntfy", "firebase", etc. — stamped by platform
+  repeated string      tags      = 8;  // ntfy tags, e.g. ["shopping_cart", "warning"]
+  string               click_url = 9;  // optional URL to open when notification is clicked
+}

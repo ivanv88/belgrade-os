@@ -30,19 +30,41 @@ class AppProcess:
         self.port = port
         self.process: Optional[subprocess.Popen] = None
 
+    def _load_manifest(self) -> dict:
+        """Load manifest.json from the app directory. Returns {} if absent or invalid."""
+        manifest_path = self.path / "manifest.json"
+        if manifest_path.exists():
+            try:
+                with open(manifest_path) as f:
+                    return json.load(f)
+            except Exception:
+                logger.warning("Failed to load manifest for %s", self.app_id)
+        return {}
+
     async def start(self):
+        manifest = self._load_manifest()
+        # Per-app driver from manifest overrides the global env var.
+        notification_driver = (
+            manifest.get("notifications", {}).get("driver")
+            or os.getenv("BEG_OS_NOTIFICATION_DRIVER", "ntfy")
+        )
+
         env = os.environ.copy()
         env["BEG_OS_APP_ID"] = self.app_id
         env["BEG_OS_CALLBACK_URL"] = f"http://localhost:{self.port}"
         env["BEG_OS_BRIDGE_URL"] = os.getenv("BEG_OS_BRIDGE_URL", "http://localhost:8081")
         env["BEG_OS_DB_URL"] = DB_URL
-        
+        env["BEG_OS_REDIS_URL"] = os.getenv("BEG_OS_REDIS_URL", "redis://localhost:6379")
+        env["BEG_OS_NOTIFICATION_DRIVER"] = notification_driver
+
         cmd = ["python3", str(self.path / "main.py")]
-        
+
         log_file_path = self.path / "app.log"
-        logger.info(f"Starting app {self.app_id} on port {self.port} (Logs: {log_file_path})...")
-        
-        # Open log file in append mode
+        logger.info(
+            "Starting app %s on port %s (driver=%s, logs=%s)",
+            self.app_id, self.port, notification_driver, log_file_path,
+        )
+
         log_file = open(log_file_path, "a")
         log_file.write(f"\n--- App started at {datetime.now()} ---\n")
         log_file.flush()
@@ -52,7 +74,7 @@ class AppProcess:
             env=env,
             stdout=log_file,
             stderr=log_file,
-            preexec_fn=os.setsid
+            preexec_fn=os.setsid,
         )
 
     async def stop(self):

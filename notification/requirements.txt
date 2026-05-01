@@ -1,0 +1,4 @@
+protobuf==5.26.1
+redis==5.0.4
+httpx==0.27.2
+pydantic-settings==2.11.0
