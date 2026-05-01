@@ -2,9 +2,9 @@ from __future__ import annotations
 import logging
 from typing import Any, Optional
 import httpx
-import redis.asyncio as aioredis
-from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine, async_sessionmaker
+from sqlalchemy.ext.asyncio import AsyncSession, AsyncEngine, async_sessionmaker
 from sqlalchemy import text
+from redis.asyncio import Redis
 
 from . import defaults
 
@@ -19,8 +19,8 @@ class AppContext:
         tenant_id: Optional[str],
         trace_id: str,
         bridge_url: str,
-        db_url: Optional[str] = None,
-        redis_url: str = defaults.REDIS_URL,
+        db_engine: Optional[AsyncEngine] = None,
+        redis_pool: Optional[Redis] = None,
         notification_driver: str = defaults.DEFAULT_NOTIFICATION_DRIVER,
     ) -> None:
         self.app_id = app_id
@@ -28,30 +28,23 @@ class AppContext:
         self.tenant_id = tenant_id
         self.trace_id = trace_id
         self._bridge_url = bridge_url
-        self._db_url = db_url
-        self._redis_url = redis_url
+        self._db_engine = db_engine
+        self._redis_pool = redis_pool
         self._notification_driver = notification_driver
         self._db_session: Optional[AsyncSession] = None
-        self._redis_client: Optional[aioredis.Redis] = None
 
     @property
     async def db(self) -> AsyncSession:
         """Returns a DB session scoped to the current tenant and app."""
-        if not self._db_url:
+        if not self._db_engine:
             raise RuntimeError("Database not configured for this app.")
         if not self._db_session:
-            engine = create_async_engine(self._db_url)
-            session_factory = async_sessionmaker(engine, expire_on_commit=False)
+            session_factory = async_sessionmaker(self._db_engine, expire_on_commit=False)
             self._db_session = session_factory()
             if self.tenant_id:
                 schema_name = f"app_{self.tenant_id.replace('-', '_')}_{self.app_id.replace('-', '_')}"
                 await self._db_session.execute(text(f"SET search_path TO {schema_name}, public"))
         return self._db_session
-
-    async def _get_redis(self) -> aioredis.Redis:
-        if not self._redis_client:
-            self._redis_client = aioredis.from_url(self._redis_url, decode_responses=False)
-        return self._redis_client
 
     async def notify(
         self,
@@ -59,14 +52,10 @@ class AppContext:
         body: str = "",
         priority: str = "NORMAL",
         tags: list[str] | None = None,
+        click_url: str | None = None,
     ) -> None:
-        """Publish a notification to tasks:notifications stream.
-
-        The notification service picks it up and dispatches via the driver
-        configured in BEG_OS_NOTIFICATION_DRIVER (stamped by the platform
-        controller from the app's manifest.json).
-        """
-        from gen import belgrade_os_pb2
+        """Publish a notification to tasks:notifications stream."""
+        from .gen import belgrade_os_pb2
 
         priority_map = {
             "LOW": belgrade_os_pb2.NOTIFICATION_LOW,
@@ -83,10 +72,13 @@ class AppContext:
         req.priority = priority_map.get(priority.upper(), belgrade_os_pb2.NOTIFICATION_NORMAL)
         req.driver = self._notification_driver
         req.tags.extend(tags or [])
+        if click_url:
+            req.click_url = click_url
 
         try:
-            r = await self._get_redis()
-            await r.xadd("tasks:notifications", {"data": req.SerializeToString()})
+            if not self._redis_pool:
+                raise RuntimeError("Redis pool not initialized in AppContext")
+            await self._redis_pool.xadd(defaults.STREAM_NOTIFICATIONS, {"data": req.SerializeToString()})
         except Exception as e:
             logger.error("Failed to publish notification: %s", e)
 
@@ -108,8 +100,6 @@ class AppContext:
             logger.error("Failed to emit event %s: %s", topic, e)
 
     async def cleanup(self) -> None:
-        """Closes the DB session and Redis client if opened."""
+        """Closes the DB session if it was opened. The shared engine and redis pool are NOT closed here."""
         if self._db_session:
             await self._db_session.close()
-        if self._redis_client:
-            await self._redis_client.aclose()

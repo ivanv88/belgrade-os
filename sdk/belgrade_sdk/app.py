@@ -141,5 +141,11 @@ class BelgradeApp:
         @self.app.on_event("startup")
         async def on_startup():
             await self.register_with_bridge()
+
+        @self.app.on_event("shutdown")
+        async def on_shutdown():
+            if self._db_engine:
+                await self._db_engine.dispose()
+            await self._redis_pool.aclose()
             
         uvicorn.run(self.app, host=host, port=port)

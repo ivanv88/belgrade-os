@@ -34,6 +34,13 @@ class RedisClient:
             raise ValueError(f"Stream message {message_id} missing 'data' field. Got: {list(fields)!r}")
         return message_id, payload
 
+    async def move_to_failed(self, message_id: str, data: bytes) -> None:
+        """Move a failed message to tasks:notifications:failed stream."""
+        await self._redis.xadd(
+            f"{NOTIFICATIONS_STREAM}:failed",
+            {"data": data, "original_id": message_id}
+        )
+
     async def ack_notification(self, consumer_group: str, message_id: str) -> None:
         """XACK tasks:notifications."""
         await self._redis.xack(NOTIFICATIONS_STREAM, consumer_group, message_id)

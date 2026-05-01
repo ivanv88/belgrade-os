@@ -33,6 +33,8 @@ class NtfyDriver(NotificationDriver):
         }
         if req.tags:
             headers["Tags"] = ",".join(req.tags)
+        if req.click_url:
+            headers["Click"] = req.click_url
 
         # Use own client if provided, otherwise context managed one
         if self._client:

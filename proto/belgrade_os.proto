@@ -101,12 +101,13 @@ enum NotificationPriority {
 
 // SDK → Redis Stream "tasks:notifications" → Notification Service
 message NotificationRequest {
-  string               trace_id = 1;  // propagated from the originating Task
-  string               app_id   = 2;  // origin app (e.g. "shopping")
-  string               user_id  = 3;  // propagated from AppContext
-  string               title    = 4;
-  string               body     = 5;
-  NotificationPriority priority = 6;
-  string               driver   = 7;  // "ntfy", "firebase", etc. — stamped by platform
-  repeated string      tags     = 8;  // ntfy tags, e.g. ["shopping_cart", "warning"]
+  string               trace_id  = 1;  // propagated from the originating Task
+  string               app_id    = 2;  // origin app (e.g. "shopping")
+  string               user_id   = 3;  // propagated from AppContext
+  string               title     = 4;
+  string               body      = 5;
+  NotificationPriority priority  = 6;
+  string               driver    = 7;  // "ntfy", "firebase", etc. — stamped by platform
+  repeated string      tags      = 8;  // ntfy tags, e.g. ["shopping_cart", "warning"]
+  string               click_url = 9;  // optional URL to open when notification is clicked
 }

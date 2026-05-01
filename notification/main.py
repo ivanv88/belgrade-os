@@ -22,9 +22,13 @@ async def _consumer_loop(redis_client: RedisClient, driver, worker_id: str) -> N
             try:
                 req = belgrade_os_pb2.NotificationRequest()
                 req.ParseFromString(data)
-                await process_notification(req, driver)
+                success = await process_notification(req, driver)
+                if not success:
+                    # DLO: Move to failed stream
+                    await redis_client.move_to_failed(msg_id, data)
             except Exception:
                 log.exception("unhandled error processing notification msg=%s", msg_id)
+                await redis_client.move_to_failed(msg_id, data)
             finally:
                 await redis_client.ack_notification(CONSUMER_GROUP, msg_id)
         except (redis.exceptions.ConnectionError, redis.exceptions.TimeoutError):
