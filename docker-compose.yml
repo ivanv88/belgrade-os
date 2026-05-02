@@ -37,11 +37,15 @@ services:
       - db
     networks:
       - beg-os-network
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     healthcheck:
       test: ["CMD", "cloudflared", "tunnel", "ready"]
-      interval: 10s
-      timeout: 5s
-      retries: 3
+  ...
+  networks:
+  beg-os-network:
+    name: beg-os-network
+    driver: bridge
 
   # Optional: Admin interface to view your data via browser (uncomment to use)
   # pgadmin:
