@@ -32,7 +32,17 @@ install_system_deps() {
         brew install protobuf go rust python3 docker docker-compose
     else
         sudo apt-get update
-        sudo apt-get install -y protobuf-compiler golang-go rustc cargo python3 python3-venv python3-pip libpq-dev build-essential docker.io docker-compose
+        # Attempt to install common deps, but handle docker separately to avoid conflicts
+        sudo apt-get install -y protobuf-compiler golang-go rustc cargo python3 python3-venv python3-pip libpq-dev build-essential
+        
+        if ! command -v docker &> /dev/null; then
+            echo "Installing Docker..."
+            sudo apt-get install -y docker.io docker-compose || {
+                echo "⚠️  Standard Docker install failed. Attempting conflict resolution..."
+                sudo apt-get remove -y containerd
+                sudo apt-get install -y docker.io docker-compose
+            }
+        fi
     fi
 }
 
