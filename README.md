@@ -23,24 +23,18 @@ Belgrade OS employs a "Redis-as-a-Transport" architecture. Services are decouple
 
 ## 🚀 Getting Started
 
-### 1. Prerequisites
-- **Docker & Docker Compose** (for Redis and Postgres)
-- **Go** (1.22+)
-- **Rust** (Cargo)
-- **Python** (3.9+)
-- **Cloudflare Tunnel** (for secure remote access)
+The easiest way to set up your development environment is using our universal setup script:
 
-### 2. Initial Setup
 ```bash
-# Install toolchain and dependencies
-make deps
-
-# Generate Protobuf code for all services
-make proto
-
-# Build Go and Rust binaries
-make build
+chmod +x setup.sh
+./setup.sh
 ```
+
+This script will check for system prerequisites, set up your Python virtual environment, and build all services.
+
+### Manual Setup (Alternative)
+If you prefer to run steps manually:
+...
 
 ### 3. Environment Configuration
 Create a `.env` file in the root directory (see `.env.example` if available) with:

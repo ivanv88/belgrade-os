@@ -7,7 +7,11 @@ export PATH := $(PATH):$(shell go env GOPATH)/bin
 deps:
 	brew install protobuf go rust
 	go install google.golang.org/protobuf/cmd/protoc-gen-go@latest
-	pip3 install -r runner/requirements-dev.txt -r inference/requirements-dev.txt
+	pip3 install -r sdk/requirements.txt \
+	             -r runner/requirements-dev.txt \
+	             -r inference/requirements-dev.txt \
+	             -r notification/requirements-dev.txt \
+	             -r vault_service/requirements-dev.txt
 
 # ─── Proto codegen ────────────────────────────────────────────────────────────
 proto: gateway/gen/belgrade_os.pb.go runner/gen/belgrade_os_pb2.py inference/gen/belgrade_os_pb2.py notification/gen/belgrade_os_pb2.py sdk/belgrade_sdk/gen/belgrade_os_pb2.py vault_service/gen/belgrade_os_pb2.py
