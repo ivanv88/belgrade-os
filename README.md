@@ -38,7 +38,7 @@ If you prefer to run steps manually:
 
 ### 3. Environment Configuration
 Create a `.env` file in the root directory (see `.env.example` if available) with:
-- `CLOUDFLARE_TOKEN`
+- `CF_TUNNEL_TOKEN`
 - `DB_PASSWORD`
 - `ANTHROPIC_API_KEY` or `GOOGLE_API_KEY`
 

@@ -104,6 +104,7 @@ GOOGLE_API_KEY=your_key_here
 # Cloudflare Zero Trust
 CF_TEAM_DOMAIN=your-team
 CF_AUDIENCE=your-aud-tag
+CF_TUNNEL_TOKEN=your-token-here
 EOF
     echo "⚠️  Please update .env with your actual API keys!"
 fi

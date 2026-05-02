@@ -4,15 +4,15 @@ services:
     container_name: beg-os-db
     restart: always
     environment:
-      # These variables will be pulled from your .env file
       POSTGRES_USER: laurent
       POSTGRES_PASSWORD: ${DB_PASSWORD}
       POSTGRES_DB: belgrade_os
     ports:
       - "5432:5432"
     volumes:
-      # Maps the database files to your local folder for persistence
       - ./data/postgres:/var/lib/postgresql/data
+    networks:
+      - beg-os-network
 
   redis:
     image: redis:7-alpine
@@ -23,15 +23,25 @@ services:
       - "6379:6379"
     volumes:
       - ./data/redis:/data
+    networks:
+      - beg-os-network
 
   tunnel:
     image: cloudflare/cloudflared:latest
     container_name: beg-os-tunnel
-    restart: always
-    command: tunnel --no-autoupdate run --token ${CLOUDFLARE_TOKEN}
-    env_file: .env
+    restart: unless-stopped
+    environment:
+      - TUNNEL_TOKEN=${CF_TUNNEL_TOKEN}
+    command: tunnel --no-autoupdate run
     depends_on:
       - db
+    networks:
+      - beg-os-network
+    healthcheck:
+      test: ["CMD", "cloudflared", "tunnel", "ready"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
 
   # Optional: Admin interface to view your data via browser (uncomment to use)
   # pgadmin:
@@ -43,3 +53,9 @@ services:
   #     PGADMIN_DEFAULT_PASSWORD: ${DB_PASSWORD}
   #   ports:
   #     - "8080:80"
+  #   networks:
+  #     - beg-os-network
+
+networks:
+  beg-os-network:
+    driver: bridge
