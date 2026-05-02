@@ -1,7 +1,7 @@
 services:
   db:
     image: postgres:15-alpine
-    container_name: belgrade-db
+    container_name: beg-os-db
     restart: always
     environment:
       # These variables will be pulled from your .env file
@@ -16,7 +16,7 @@ services:
 
   redis:
     image: redis:7-alpine
-    container_name: belgrade-redis
+    container_name: beg-os-redis
     restart: always
     command: redis-server --appendonly yes
     ports:
@@ -26,6 +26,7 @@ services:
 
   tunnel:
     image: cloudflare/cloudflared:latest
+    container_name: beg-os-tunnel
     restart: always
     command: tunnel --no-autoupdate run --token ${CLOUDFLARE_TOKEN}
     env_file: .env
@@ -35,7 +36,7 @@ services:
   # Optional: Admin interface to view your data via browser (uncomment to use)
   # pgadmin:
   #   image: dpage/pgadmin4
-  #   container_name: belgrade-pgadmin
+  #   container_name: beg-os-pgadmin
   #   restart: always
   #   environment:
   #     PGADMIN_DEFAULT_EMAIL: laurent@example.com
