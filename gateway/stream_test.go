@@ -29,6 +29,7 @@ func (r *sseRecorder) Flush()                      {}
 
 func TestStreamSSEWritesEventsAndStopsOnDone(t *testing.T) {
 	c := requireRedis(t)
+	defer c.Close()
 	taskID := "sse-stream-" + uuid.NewString()
 	rec := &sseRecorder{header: make(http.Header)}
 
@@ -52,7 +53,7 @@ func TestStreamSSEWritesEventsAndStopsOnDone(t *testing.T) {
 		{TaskId: taskID, Content: "", Type: belgrade.ThoughtEventType_DONE},
 	} {
 		data, _ := proto.Marshal(evt)
-		c.rdb.Publish(context.Background(), "sse:"+taskID, data)
+		c.RDB.Publish(context.Background(), "sse:"+taskID, data)
 		time.Sleep(20 * time.Millisecond)
 	}
 
@@ -76,6 +77,7 @@ func TestStreamSSEWritesEventsAndStopsOnDone(t *testing.T) {
 
 func TestStreamSSECancelContextCleansUp(t *testing.T) {
 	c := requireRedis(t)
+	defer c.Close()
 	taskID := "sse-cancel-" + uuid.NewString()
 	rec := &sseRecorder{header: make(http.Header)}
 

@@ -10,12 +10,14 @@ Belgrade OS employs a "Redis-as-a-Transport" architecture. Services are decouple
 
 | Directory | Language | Role |
 | :--- | :--- | :--- |
-| `gateway/` | Go | HTTP entry point, JWT authentication (Cloudflare), task ingestion, SSE proxying. |
+| `gateway/` | Go | HTTP entry point, JWT authentication (Cloudflare), task ingestion, SSE proxying, and **secure UI serving**. |
 | `inference/` | Python | Inference Controller; interacts with LLMs (Claude) and drives the tool-use loop. |
 | `runner/` | Python | Resource Runner; consumes tool calls from Redis and dispatches them to the Capability Bridge. |
 | `bridge/` | Rust | Capability Bridge; the central tool registry and event broker. Forwards tool calls and events to apps. |
-| `platform_controller/` | Python | The OS Kernel; manages app sub-processes, hot-reloading, and the dynamic scheduler. |
-| `sdk/` | Python | Belgrade SDK; provides the `@tool` and `@on_event` decorators for rapid app development. |
+| `platform_controller/` | Python | The OS Kernel; manages app sub-processes, hot-reloading, dynamic scheduler, and **RBAC sync**. |
+| `vault_service/` | Python | Vault Service; gatekeeps the Obsidian vault, performing atomic writes via Redis streams. |
+| `notification/` | Python | Notification Service; consumes `tasks:notifications` and dispatches via ntfy.sh. |
+| `sdk/` | Python | Belgrade SDK; provides the `@tool` and `@on_event` decorators and **indirect Vault access**. |
 
 ### App Execution & Tool Discovery
 
@@ -23,8 +25,9 @@ The Belgrade OS uses a distributed, callback-based model managed by the **Platfo
 
 1.  **Lifecycle**: The Platform Controller scans `/apps`, spawns them as sub-processes, and redirects logs to `apps/{id}/app.log`.
 2.  **Registration**: Apps use the SDK to register tools and subscriptions with the `bridge` via `POST /v1/register` on startup.
-3.  **Dispatch**: The `bridge` routes tool calls (`/v1/execute`) and event fan-out (`/v1/events/publish`) to app callback URLs.
-4.  **Multi-Tenancy**: `user_id` and `tenant_id` are propagated through all messages, enabling the SDK to provide scoped `ctx.db` (Postgres schemas) and `ctx.notify`.
+3.  **Security (RBAC)**: The Platform Controller syncs app permissions from Postgres to Redis. The Gateway enforces these permissions for both API calls and UI asset serving.
+4.  **Multi-UI**: The Gateway serves static assets from `/apps/{app_id}/static/{bundle}/` and injects `window.BELGRADE_CONFIG` for zero-config frontend development.
+5.  **Multi-Tenancy**: `user_id` and `tenant_id` are propagated through all messages, enabling the SDK to provide scoped `ctx.db` (Postgres schemas) and `ctx.notify`.
 
 ### Data Flow & Communication
 

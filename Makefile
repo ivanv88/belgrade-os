@@ -10,7 +10,7 @@ deps:
 	pip3 install -r runner/requirements-dev.txt -r inference/requirements-dev.txt
 
 # ─── Proto codegen ────────────────────────────────────────────────────────────
-proto: gateway/gen/belgrade_os.pb.go runner/gen/belgrade_os_pb2.py inference/gen/belgrade_os_pb2.py notification/gen/belgrade_os_pb2.py sdk/belgrade_sdk/gen/belgrade_os_pb2.py
+proto: gateway/gen/belgrade_os.pb.go runner/gen/belgrade_os_pb2.py inference/gen/belgrade_os_pb2.py notification/gen/belgrade_os_pb2.py sdk/belgrade_sdk/gen/belgrade_os_pb2.py vault_service/gen/belgrade_os_pb2.py
 	@echo "proto codegen complete"
 
 gateway/gen/belgrade_os.pb.go: $(PROTO_SRC)
@@ -40,6 +40,11 @@ sdk/belgrade_sdk/gen/belgrade_os_pb2.py: $(PROTO_SRC)
 	touch sdk/belgrade_sdk/gen/__init__.py
 	python3 -m grpc_tools.protoc -Iproto --python_out=sdk/belgrade_sdk/gen $(PROTO_SRC)
 
+vault_service/gen/belgrade_os_pb2.py: $(PROTO_SRC)
+	mkdir -p vault_service/gen
+	touch vault_service/gen/__init__.py
+	python3 -m grpc_tools.protoc -Iproto --python_out=vault_service/gen $(PROTO_SRC)
+
 # Rust codegen runs via bridge/build.rs — no explicit Make target needed.
 
 # ─── Build ────────────────────────────────────────────────────────────────────
@@ -66,4 +71,5 @@ clean:
 	rm -f inference/gen/belgrade_os_pb2.py inference/gen/belgrade_os_pb2_grpc.py
 	rm -f notification/gen/belgrade_os_pb2.py notification/gen/belgrade_os_pb2_grpc.py
 	rm -f sdk/belgrade_sdk/gen/belgrade_os_pb2.py sdk/belgrade_sdk/gen/belgrade_os_pb2_grpc.py
+	rm -f vault_service/gen/belgrade_os_pb2.py
 	cd bridge && cargo clean

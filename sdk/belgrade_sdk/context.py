@@ -1,6 +1,6 @@
 from __future__ import annotations
 import logging
-from typing import Any, Optional
+from typing import Any, Optional, Union
 import httpx
 from sqlalchemy.ext.asyncio import AsyncSession, AsyncEngine, async_sessionmaker
 from sqlalchemy import text
@@ -9,6 +9,51 @@ from redis.asyncio import Redis
 from . import defaults
 
 logger = logging.getLogger(__name__)
+
+
+class VaultAdapter:
+    def __init__(self, ctx: AppContext):
+        self.ctx = ctx
+
+    async def write(self, path: str, content: Union[str, bytes]) -> None:
+        """Indirect write to the vault via Redis stream."""
+        from .gen import belgrade_os_pb2
+
+        if isinstance(content, str):
+            content_bytes = content.encode("utf-8")
+        else:
+            content_bytes = content
+
+        op = belgrade_os_pb2.VaultOperation()
+        op.trace_id = self.ctx.trace_id or ""
+        op.app_id = self.ctx.app_id
+        op.op = belgrade_os_pb2.VaultOperation.WRITE
+        op.path = path
+        op.content = content_bytes
+
+        try:
+            if not self.ctx._redis_pool:
+                raise RuntimeError("Redis pool not initialized in AppContext")
+            await self.ctx._redis_pool.xadd("tasks:vault_ops", {"data": op.SerializeToString()})
+        except Exception as e:
+            logger.error("Failed to publish vault operation: %s", e)
+
+    async def delete(self, path: str) -> None:
+        """Indirect delete from the vault via Redis stream."""
+        from .gen import belgrade_os_pb2
+
+        op = belgrade_os_pb2.VaultOperation()
+        op.trace_id = self.ctx.trace_id or ""
+        op.app_id = self.ctx.app_id
+        op.op = belgrade_os_pb2.VaultOperation.DELETE
+        op.path = path
+
+        try:
+            if not self.ctx._redis_pool:
+                raise RuntimeError("Redis pool not initialized in AppContext")
+            await self.ctx._redis_pool.xadd("tasks:vault_ops", {"data": op.SerializeToString()})
+        except Exception as e:
+            logger.error("Failed to publish vault operation: %s", e)
 
 
 class AppContext:
@@ -32,6 +77,10 @@ class AppContext:
         self._redis_pool = redis_pool
         self._notification_driver = notification_driver
         self._db_session: Optional[AsyncSession] = None
+
+    @property
+    def vault(self) -> VaultAdapter:
+        return VaultAdapter(self)
 
     @property
     async def db(self) -> AsyncSession:

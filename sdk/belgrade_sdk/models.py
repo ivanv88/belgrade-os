@@ -31,3 +31,18 @@ class ExecuteResponse(BaseModel):
     success: bool
     output_json: str = ""
     error: str = ""
+
+class UIBundleDefinition(BaseModel):
+    type: str = "spa"
+    path: str = "static/"
+    entry: str = "index.html"
+    required_role: Optional[str] = None
+
+class AppUIConfig(BaseModel):
+    enabled: bool = False
+    bundles: Dict[str, UIBundleDefinition] = {}
+
+class AppManifest(BaseModel):
+    app_id: str
+    ui: Optional[AppUIConfig] = None
+    related_apps: List[str] = []

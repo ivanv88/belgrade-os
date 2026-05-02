@@ -7,23 +7,36 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"belgrade-os/gateway/auth"
+	"belgrade-os/gateway/redis"
 )
 
-func newTestHandler(t *testing.T, jwksURL string, rClient *RedisClient) *Handler {
+func newTestHandler(t *testing.T, jwksURL string, rClient *redis.RedisClient) *Handler {
 	t.Helper()
-	cache := newTestCache(t, jwksURL)
+	cache := auth.NewTestCache(t, jwksURL)
 	return NewHandler(cache, rClient, "test-aud")
 }
 
+func requireRedis(t *testing.T) *redis.RedisClient {
+	t.Helper()
+	c, err := redis.NewRedisClient("redis://localhost:6379")
+	if err != nil {
+		t.Skipf("redis unavailable: %v", err)
+	}
+	return c
+}
+
 func TestCreateTaskReturns202WithTaskID(t *testing.T) {
-	key := generateTestKey(t)
+	key := auth.GenerateTestKey(t)
 	kid := "handler-kid-valid"
-	srv := serveJWKS(t, &key.PublicKey, kid)
+	srv := auth.ServeJWKS(t, &key.PublicKey, kid)
 	defer srv.Close()
 	rClient := requireRedis(t)
+	defer rClient.Close()
 
 	h := newTestHandler(t, srv.URL, rClient)
-	tokenStr := signToken(t, key, kid, "user-handler-1", "test-aud", time.Now().Add(time.Hour))
+	tokenStr := auth.SignToken(t, key, kid, "user-handler-1", "test-aud", time.Now().Add(time.Hour))
 
 	body := `{"prompt":"make a meal plan","stream":false}`
 	req := httptest.NewRequest(http.MethodPost, "/v1/tasks", strings.NewReader(body))
@@ -50,7 +63,7 @@ func TestCreateTaskReturns202WithTaskID(t *testing.T) {
 }
 
 func TestCreateTaskMissingAuthHeader(t *testing.T) {
-	cache := newTestCache(t, "http://localhost:0")
+	cache := auth.NewTestCache(t, "http://localhost:0")
 	h := NewHandler(cache, nil, "aud")
 
 	req := httptest.NewRequest(http.MethodPost, "/v1/tasks", strings.NewReader(`{"prompt":"hi"}`))
@@ -63,14 +76,14 @@ func TestCreateTaskMissingAuthHeader(t *testing.T) {
 }
 
 func TestCreateTaskMissingPrompt(t *testing.T) {
-	key := generateTestKey(t)
+	key := auth.GenerateTestKey(t)
 	kid := "handler-kid-prompt"
-	srv := serveJWKS(t, &key.PublicKey, kid)
+	srv := auth.ServeJWKS(t, &key.PublicKey, kid)
 	defer srv.Close()
 
-	cache := newTestCache(t, srv.URL)
+	cache := auth.NewTestCache(t, srv.URL)
 	h := NewHandler(cache, nil, "test-aud")
-	tokenStr := signToken(t, key, kid, "user-prompt-test", "test-aud", time.Now().Add(time.Hour))
+	tokenStr := auth.SignToken(t, key, kid, "user-prompt-test", "test-aud", time.Now().Add(time.Hour))
 
 	req := httptest.NewRequest(http.MethodPost, "/v1/tasks", strings.NewReader(`{}`))
 	req.Header.Set("Cf-Access-Jwt-Assertion", tokenStr)
@@ -83,12 +96,12 @@ func TestCreateTaskMissingPrompt(t *testing.T) {
 }
 
 func TestCreateTaskInvalidToken(t *testing.T) {
-	key := generateTestKey(t)
+	key := auth.GenerateTestKey(t)
 	kid := "handler-kid-invalid"
-	srv := serveJWKS(t, &key.PublicKey, kid)
+	srv := auth.ServeJWKS(t, &key.PublicKey, kid)
 	defer srv.Close()
 
-	cache := newTestCache(t, srv.URL)
+	cache := auth.NewTestCache(t, srv.URL)
 	h := NewHandler(cache, nil, "test-aud")
 
 	req := httptest.NewRequest(http.MethodPost, "/v1/tasks", strings.NewReader(`{"prompt":"hi"}`))

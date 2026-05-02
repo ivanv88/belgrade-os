@@ -1,4 +1,4 @@
-package main
+package redis
 
 import (
 	"context"
@@ -11,7 +11,7 @@ import (
 )
 
 type RedisClient struct {
-	rdb *goredis.Client
+	RDB *goredis.Client
 }
 
 func NewRedisClient(url string) (*RedisClient, error) {
@@ -19,15 +19,15 @@ func NewRedisClient(url string) (*RedisClient, error) {
 	if err != nil {
 		return nil, fmt.Errorf("parse redis URL: %w", err)
 	}
-	return &RedisClient{rdb: goredis.NewClient(opts)}, nil
+	return &RedisClient{RDB: goredis.NewClient(opts)}, nil
 }
 
 func (c *RedisClient) Ping(ctx context.Context) error {
-	return c.rdb.Ping(ctx).Err()
+	return c.RDB.Ping(ctx).Err()
 }
 
 func (c *RedisClient) Close() error {
-	return c.rdb.Close()
+	return c.RDB.Close()
 }
 
 func (c *RedisClient) PublishTask(ctx context.Context, task *belgrade.Task) error {
@@ -35,7 +35,7 @@ func (c *RedisClient) PublishTask(ctx context.Context, task *belgrade.Task) erro
 	if err != nil {
 		return fmt.Errorf("marshal task: %w", err)
 	}
-	return c.rdb.XAdd(ctx, &goredis.XAddArgs{
+	return c.RDB.XAdd(ctx, &goredis.XAddArgs{
 		Stream: "tasks:inbound",
 		MaxLen: 1000,
 		Approx: true,
@@ -43,13 +43,16 @@ func (c *RedisClient) PublishTask(ctx context.Context, task *belgrade.Task) erro
 	}).Err()
 }
 
+func (c *RedisClient) GetPermission(ctx context.Context, userID, appID, bundleID string) (string, error) {
+	key := fmt.Sprintf("perms:%s", userID)
+	field := fmt.Sprintf("%s:%s", appID, bundleID)
+	return c.RDB.HGet(ctx, key, field).Result()
+}
+
 // SubscribeSSE subscribes to sse:{taskID} and emits decoded ThoughtEvents.
-// It blocks until Redis acknowledges the SUBSCRIBE command, so the caller
-// can safely publish without a race window. The returned channel is closed
-// when ctx is cancelled or the Pub/Sub connection drops.
 func (c *RedisClient) SubscribeSSE(ctx context.Context, taskID string) (<-chan *belgrade.ThoughtEvent, error) {
 	ch := make(chan *belgrade.ThoughtEvent, 16)
-	pubsub := c.rdb.Subscribe(ctx, fmt.Sprintf("sse:%s", taskID))
+	pubsub := c.RDB.Subscribe(ctx, fmt.Sprintf("sse:%s", taskID))
 
 	if _, err := pubsub.Receive(ctx); err != nil {
 		pubsub.Close()

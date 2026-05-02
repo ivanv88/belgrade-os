@@ -10,14 +10,18 @@ import (
 	"os/signal"
 	"syscall"
 	"time"
+
+	"belgrade-os/gateway/auth"
+	"belgrade-os/gateway/redis"
+	"belgrade-os/gateway/ui"
 )
 
 func main() {
 	cfg := LoadConfig()
 
-	cache := NewJWKSCache(cfg.CFTeamDomain)
+	cache := auth.NewJWKSCache(cfg.CFTeamDomain)
 
-	rClient, err := NewRedisClient(cfg.RedisURL)
+	rClient, err := redis.NewRedisClient(cfg.RedisURL)
 	if err != nil {
 		log.Fatalf("redis connect: %v", err)
 	}
@@ -28,9 +32,14 @@ func main() {
 	}
 
 	h := NewHandler(cache, rClient, cfg.CFAudience)
+	uiH := ui.NewHandler(cfg.AppsRoot, rClient, cfg.GatewayURL)
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /v1/tasks", h.CreateTask)
+
+	// UI Module Routes
+	uiMiddleware := ui.AuthMiddleware(cache, cfg.CFAudience)
+	mux.Handle("GET /ui/", uiMiddleware(http.HandlerFunc(uiH.ServeAsset)))
 
 	addr := fmt.Sprintf(":%s", cfg.Port)
 	srv := &http.Server{

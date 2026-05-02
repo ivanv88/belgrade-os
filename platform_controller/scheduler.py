@@ -3,10 +3,12 @@ import logging
 import json
 import httpx
 from datetime import datetime
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Any
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
 from pydantic import BaseModel
+from sqlalchemy import text
+from redis_client import RedisClient
 
 logger = logging.getLogger(__name__)
 
@@ -80,3 +82,49 @@ class SchedulerManager:
                     logger.error(f"Scheduled tool {entry.tool_name} failed: {result.get('error')}")
             except Exception as e:
                 logger.error(f"Failed to dispatch scheduled tool {entry.tool_name}: {e}")
+
+class PermissionSyncManager:
+    def __init__(self, db_engine, redis_url: str):
+        self.engine = db_engine
+        self.redis_url = redis_url
+        self.redis = RedisClient(redis_url)
+        self.scheduler = AsyncIOScheduler()
+
+    def start(self):
+        self.scheduler.add_job(
+            self.sync_all,
+            "interval",
+            minutes=5,
+            id="perm_sync",
+            replace_existing=True
+        )
+        self.scheduler.start()
+        logger.info("Permission Sync Manager started (5m interval)")
+
+    async def sync_all(self):
+        """Fetch all permissions from DB and push to Redis."""
+        logger.info("Syncing permissions to Redis...")
+        try:
+            async with self.engine.connect() as conn:
+                result = await conn.execute(text(
+                    "SELECT user_id, app_id, bundle_id, role FROM shared.app_permissions"
+                ))
+                
+                # Group by user_id
+                user_perms = {}
+                for row in result.all():
+                    uid, app_id, bundle, role = row
+                    if uid not in user_perms:
+                        user_perms[uid] = {}
+                    user_perms[uid][f"{app_id}:{bundle}"] = role
+
+                # Sync each user
+                for uid, perms in user_perms.items():
+                    await self.redis.sync_permissions(uid, perms)
+                
+                logger.info(f"Synced permissions for {len(user_perms)} users")
+        except Exception as e:
+            logger.error(f"Failed to sync permissions: {e}")
+
+    async def close(self):
+        await self.redis.close()

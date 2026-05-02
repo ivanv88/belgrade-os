@@ -24,8 +24,10 @@ For full technical detail see `docs/tech.spec.md`.
 | **Bridge** | Rust (Axum) | Capability registry — tool registration, write-through Redis cache |
 | **Inference** | Python | Inference controller — Claude API, tool loop |
 | **Runner** | Python | Resource runner — executes tool calls from apps |
-| **Platform Controller** | Python | App lifecycle — process supervision, APScheduler cron |
-| **SDK** | Python (`belgrade_sdk`) | App base class — tool registration, `/execute` callback |
+| **Platform Controller** | Python | App lifecycle — process supervision, APScheduler cron, **RBAC sync** |
+| **Vault Service** | Python | Gateway for Obsidian Vault — atomic writes via Redis |
+| **Notification Service**| Python | Consumer for `tasks:notifications` — pluggable ntfy/firebase drivers |
+| **SDK** | Python (`belgrade_sdk`) | App base class — tool registration, `/execute` callback, **Indirect Vault access** |
 | **Transport** | Redis (Streams + Pub/Sub) | All inter-service communication |
 | **Database** | PostgreSQL 15 (Docker) | Platform controller state, per-app schemas |
 | **Security** | Cloudflare Tunnel + Zero Trust | Identity-based access (beg-os.fyi, email OTP) |
@@ -69,18 +71,20 @@ For full technical detail see `docs/tech.spec.md`.
 ## 5. Roadmap (Current Status)
 
 ### ✅ Phase 1: Distributed Foundation (Completed Today)
-- [x] **5-Service Architecture**: Gateway (Go), Bridge (Rust), Inference (Py), Runner (Py), Controller (Py).
-- [x] **OS Kernel**: Platform Controller with sub-process management and hot-reload.
-- [x] **Belgrade SDK**: @tool and @on_event decorators with automatic registration.
-- [x] **Dynamic Scheduler**: Postgres-backed cron jobs managed by the Controller.
+- [x] **6-Service Architecture**: Gateway, Bridge, Inference, Runner, Controller, Notification.
+- [x] **Notification Service**: Centralized Redis-based service with ntfy.sh and DLO support.
+- [x] **Persistent Bridge**: Bridge registry migrated to write-through Redis cache.
+- [x] **OS Kernel**: Platform Controller with sub-process management and manifest injection.
+- [x] **Belgrade SDK**: Shared connection pooling for DB/Redis and native notification support.
 - [x] **Event Bus**: Authoritative pub/sub broker implemented in the Bridge.
-- [x] **Log Visibility**: Automatic redirection of app logs to apps/{id}/app.log.
-- [x] **Identity Loop**: Propagation of user_id/tenant_id for scoped DB/Notify.
+- [x] **Multi-UI Service**: Go-based secure static asset serving with auto-config injection.
+- [x] **Vault Service**: Conflict-free, indirect vault writing via Redis streams and locks.
+- [x] **RBAC Foundation**: Centralized permission management with high-performance Redis caching.
 
 ### 🚀 Phase 2: The Nervous System (Next)
-- [ ] **Multi-UI Service**: Serve static assets for app dashboards and Obsidian plugins.
 - [ ] **Platform Connectors**: OAuth-managed connectors for Google Drive, Calendar, and Gmail.
 - [ ] **Stateful Workflows**: Built-in support for long-running multi-app sequences.
+- [ ] **Dashboard Shell**: A unified entry point listing all authorized user apps.
 
 ### 🔮 Phase 3: AI Intelligence
 - [ ] **Admin Agent Evolution**: Enable the agent to auto-install apps from Git URLs.

@@ -7,7 +7,9 @@ import (
 
 	"github.com/google/uuid"
 
+	"belgrade-os/gateway/auth"
 	belgrade "belgrade-os/gateway/gen"
+	"belgrade-os/gateway/redis"
 )
 
 type taskRequest struct {
@@ -22,12 +24,12 @@ type taskResponse struct {
 }
 
 type Handler struct {
-	auth     *JWKSCache
-	redis    *RedisClient
+	auth     *auth.JWKSCache
+	redis    *redis.RedisClient
 	audience string
 }
 
-func NewHandler(auth *JWKSCache, redis *RedisClient, audience string) *Handler {
+func NewHandler(auth *auth.JWKSCache, redis *redis.RedisClient, audience string) *Handler {
 	return &Handler{auth: auth, redis: redis, audience: audience}
 }
 
@@ -38,7 +40,7 @@ func (h *Handler) CreateTask(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	claims, err := ValidateToken(tokenStr, h.auth, h.audience)
+	claims, err := auth.ValidateToken(tokenStr, h.auth, h.audience)
 	if err != nil {
 		http.Error(w, "unauthorized", http.StatusUnauthorized)
 		return

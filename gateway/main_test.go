@@ -12,12 +12,14 @@ import (
 
 	"google.golang.org/protobuf/proto"
 
+	"belgrade-os/gateway/auth"
 	belgrade "belgrade-os/gateway/gen"
+	"belgrade-os/gateway/redis"
 )
 
-func newTestServer(t *testing.T, jwksURL string, rClient *RedisClient) *httptest.Server {
+func newTestServer(t *testing.T, jwksURL string, rClient *redis.RedisClient) *httptest.Server {
 	t.Helper()
-	cache := newTestCache(t, jwksURL)
+	cache := auth.NewTestCache(t, jwksURL)
 	h := NewHandler(cache, rClient, "e2e-aud")
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /v1/tasks", h.CreateTask)
@@ -25,16 +27,29 @@ func newTestServer(t *testing.T, jwksURL string, rClient *RedisClient) *httptest
 }
 
 func TestEndToEndPostTask(t *testing.T) {
-	key := generateTestKey(t)
+	key := auth.GenerateTestKey(t)
 	kid := "e2e-kid"
-	jwksSrv := serveJWKS(t, &key.PublicKey, kid)
+	jwksSrv := auth.ServeJWKS(t, &key.PublicKey, kid)
 	defer jwksSrv.Close()
 
-	rClient := requireRedis(t)
+	rClient, err := redis.NewRedisClient("redis://localhost:6379")
+	if err != nil {
+		t.Skipf("redis unavailable: %v", err)
+	}
+	defer rClient.Close()
+	
+	// Ensure Redis is reachable
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	if err := rClient.Ping(ctx); err != nil {
+		cancel()
+		t.Skipf("redis ping failed: %v", err)
+	}
+	cancel()
+
 	srv := newTestServer(t, jwksSrv.URL, rClient)
 	defer srv.Close()
 
-	tokenStr := signToken(t, key, kid, "user-e2e", "e2e-aud", time.Now().Add(time.Hour))
+	tokenStr := auth.SignToken(t, key, kid, "user-e2e", "e2e-aud", time.Now().Add(time.Hour))
 	body := `{"prompt":"what should I eat today?","stream":false}`
 
 	req, _ := http.NewRequest(http.MethodPost, srv.URL+"/v1/tasks", bytes.NewBufferString(body))
@@ -60,8 +75,8 @@ func TestEndToEndPostTask(t *testing.T) {
 	}
 
 	// Verify the task was written to Redis stream and is decodable
-	ctx := context.Background()
-	msgs, err := rClient.rdb.XRevRangeN(ctx, "tasks:inbound", "+", "-", 1).Result()
+	ctx = context.Background()
+	msgs, err := rClient.RDB.XRevRangeN(ctx, "tasks:inbound", "+", "-", 1).Result()
 	if err != nil || len(msgs) == 0 {
 		t.Fatalf("read stream: err=%v, len=%d", err, len(msgs))
 	}

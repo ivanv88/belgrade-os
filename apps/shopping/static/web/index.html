@@ -1,0 +1,50 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Shopping List</title>
+    <style>
+        body { font-family: sans-serif; padding: 2rem; background: #f4f4f9; }
+        .card { background: white; padding: 1.5rem; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
+        h1 { color: #333; }
+        ul { list-style: none; padding: 0; }
+        li { padding: 0.5rem 0; border-bottom: 1px solid #eee; }
+    </style>
+</head>
+<body>
+    <div class="card">
+        <h1>🛍️ Shopping List</h1>
+        <div id="status">Loading...</div>
+        <ul id="list"></ul>
+    </div>
+
+    <script>
+        // Use the injected BELGRADE_CONFIG
+        console.log("Belgrade Config:", window.BELGRADE_CONFIG);
+        
+        async function loadList() {
+            const status = document.getElementById('status');
+            const list = document.getElementById('list');
+            
+            try {
+                // For a real app, we'd call the Gateway
+                // fetch(`${BELGRADE_CONFIG.gateway_url}/execute`, ...)
+                status.innerText = "Ready to serve for: " + BELGRADE_CONFIG.user_id;
+                
+                // Mock data for this test
+                const items = ["Apples", "Milk", "Bread"];
+                items.forEach(item => {
+                    const li = document.createElement('li');
+                    li.innerText = item;
+                    list.appendChild(li);
+                });
+            } catch (e) {
+                status.innerText = "Error: " + e.message;
+            }
+        }
+
+        window.onload = loadList;
+    </script>
+</body>
+</html>

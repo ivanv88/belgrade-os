@@ -111,3 +111,19 @@ message NotificationRequest {
   repeated string      tags      = 8;  // ntfy tags, e.g. ["shopping_cart", "warning"]
   string               click_url = 9;  // optional URL to open when notification is clicked
 }
+
+// ─── Vault Service ────────────────────────────────────────────────────────────
+
+// App → Redis Stream "tasks:vault_ops" → Vault Service
+message VaultOperation {
+  enum OpType {
+    OP_TYPE_UNSPECIFIED = 0;
+    WRITE  = 1;
+    DELETE = 2;
+  }
+  string trace_id = 1;
+  string app_id   = 2;
+  OpType op       = 3;
+  string path     = 4; // relative to vault root
+  bytes  content  = 5; // for WRITE
+}

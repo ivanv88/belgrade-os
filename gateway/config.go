@@ -7,6 +7,8 @@ type Config struct {
 	RedisURL     string
 	CFTeamDomain string
 	CFAudience   string
+	AppsRoot     string
+	GatewayURL   string
 }
 
 func LoadConfig() Config {
@@ -15,6 +17,8 @@ func LoadConfig() Config {
 		RedisURL:     getEnv("REDIS_URL", "redis://localhost:6379"),
 		CFTeamDomain: getEnv("CF_TEAM_DOMAIN", ""),
 		CFAudience:   getEnv("CF_AUDIENCE", ""),
+		AppsRoot:     getEnv("APPS_ROOT", "../apps"),
+		GatewayURL:   getEnv("GATEWAY_URL", "http://localhost:8080"),
 	}
 }
 

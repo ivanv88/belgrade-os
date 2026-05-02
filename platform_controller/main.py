@@ -12,13 +12,14 @@ from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sess
 from sqlalchemy import text, Column, String, JSON, DateTime
 from sqlalchemy.orm import declarative_base
 
-from scheduler import SchedulerManager, ScheduleEntry
+from scheduler import SchedulerManager, ScheduleEntry, PermissionSyncManager
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 logger = logging.getLogger(__name__)
 
 # --- Database Setup ---
 DB_URL = os.getenv("DATABASE_URL", "postgresql+asyncpg://postgres:postgres@localhost:5432/postgres")
+REDIS_URL = os.getenv("BEG_OS_REDIS_URL", "redis://localhost:6379")
 engine = create_async_engine(DB_URL)
 SessionLocal = async_sessionmaker(engine, expire_on_commit=False)
 
@@ -122,6 +123,7 @@ app = FastAPI(title="Belgrade Platform Controller")
 bridge_url = os.getenv("BEG_OS_BRIDGE_URL", "http://localhost:8081")
 app_supervisor = AppSupervisor(apps_root=Path(__file__).parent.parent / "apps")
 scheduler_manager = SchedulerManager(bridge_url=bridge_url)
+permission_sync = PermissionSyncManager(db_engine=engine, redis_url=REDIS_URL)
 
 class AppAction(BaseModel):
     app_id: str
@@ -142,12 +144,24 @@ async def startup_event():
                 updated_at TIMESTAMPTZ DEFAULT NOW()
             )
         """))
+        await conn.execute(text("""
+            CREATE TABLE IF NOT EXISTS shared.app_permissions (
+                user_id TEXT NOT NULL,
+                app_id TEXT NOT NULL,
+                bundle_id TEXT NOT NULL DEFAULT 'default',
+                role TEXT NOT NULL,
+                PRIMARY KEY (user_id, app_id, bundle_id)
+            )
+        """))
 
     # 2. Start Apps
     await app_supervisor.discover_and_start()
 
     # 3. Start Scheduler & Load existing jobs
     scheduler_manager.start()
+    permission_sync.start()
+    await permission_sync.sync_all()
+
     async with SessionLocal() as session:
         result = await session.execute(text("SELECT id, user_id, tenant_id, cron, tool_name, params FROM shared.schedules"))
         for row in result.all():

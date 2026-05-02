@@ -1,4 +1,4 @@
-package main
+package redis
 
 import (
 	"context"
@@ -18,11 +18,11 @@ func requireRedis(t *testing.T) *RedisClient {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
-	if err := c.rdb.Ping(ctx).Err(); err != nil {
-		c.rdb.Close()
+	if err := c.RDB.Ping(ctx).Err(); err != nil {
+		c.RDB.Close()
 		t.Skipf("redis ping failed: %v", err)
 	}
-	t.Cleanup(func() { c.rdb.Close() })
+	t.Cleanup(func() { c.RDB.Close() })
 	return c
 }
 
@@ -41,7 +41,7 @@ func TestPublishTask(t *testing.T) {
 		t.Fatalf("publish: %v", err)
 	}
 
-	msgs, err := c.rdb.XRevRangeN(ctx, "tasks:inbound", "+", "-", 1).Result()
+	msgs, err := c.RDB.XRevRangeN(ctx, "tasks:inbound", "+", "-", 1).Result()
 	if err != nil || len(msgs) == 0 {
 		t.Fatalf("read stream: err=%v, len=%d", err, len(msgs))
 	}
@@ -81,7 +81,7 @@ func TestSubscribeSSEReceivesEvent(t *testing.T) {
 		TraceId: "trace-sub-1",
 	}
 	data, _ := proto.Marshal(sent)
-	c.rdb.Publish(ctx, "sse:"+taskID, data)
+	c.RDB.Publish(ctx, "sse:"+taskID, data)
 
 	select {
 	case got := <-evtCh:

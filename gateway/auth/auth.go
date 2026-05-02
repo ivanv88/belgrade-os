@@ -1,4 +1,4 @@
-package main
+package auth
 
 import (
 	"crypto/rsa"
@@ -27,8 +27,6 @@ type jwksResponse struct {
 }
 
 // JWKSCache caches Cloudflare RS256 public keys by kid with a 24 h TTL.
-// On unknown kid it re-fetches once to handle key rotation.
-// singleflight.Group ensures concurrent callers share a single in-flight refresh.
 type JWKSCache struct {
 	mu        sync.RWMutex
 	sf        singleflight.Group
@@ -116,6 +114,10 @@ type Claims struct {
 	UserID   string
 	Audience jwt.ClaimStrings
 }
+
+type contextKey string
+
+const ClaimsKey contextKey = "claims"
 
 func ValidateToken(tokenStr string, cache *JWKSCache, audience string) (*Claims, error) {
 	token, err := jwt.Parse(tokenStr, func(t *jwt.Token) (interface{}, error) {

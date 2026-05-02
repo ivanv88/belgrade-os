@@ -1,0 +1,69 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Belgrade OS Dashboard</title>
+    <style>
+        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; margin: 0; display: flex; height: 100vh; background: #2c3e50; color: white; }
+        .sidebar { width: 250px; background: #1a252f; padding: 1rem; box-shadow: 2px 0 5px rgba(0,0,0,0.2); }
+        .main { flex: 1; display: flex; flex-direction: column; }
+        .header { height: 60px; background: #34495e; display: flex; align-items: center; padding: 0 2rem; justify-content: space-between; }
+        .content { flex: 1; padding: 0; background: #ecf0f1; position: relative; }
+        iframe { width: 100%; height: 100%; border: none; }
+        .nav-item { padding: 0.75rem 1rem; cursor: pointer; border-radius: 4px; margin-bottom: 0.5rem; transition: background 0.2s; }
+        .nav-item:hover { background: #34495e; }
+        .nav-item.active { background: #3498db; }
+        .logo { font-size: 1.5rem; font-weight: bold; margin-bottom: 2rem; display: flex; align-items: center; }
+        .logo span { margin-right: 0.5rem; }
+    </style>
+</head>
+<body>
+    <div class="sidebar">
+        <div class="logo"><span>🏰</span> Belgrade OS</div>
+        <div id="nav">
+            <div class="nav-item active" onclick="loadApp('dashboard', 'web')">🏠 Home</div>
+            <div class="nav-item" onclick="loadApp('shopping', 'web')">🛍️ Shopping</div>
+        </div>
+    </div>
+    <div class="main">
+        <div class="header">
+            <div id="app-title">Dashboard</div>
+            <div id="user-info">...</div>
+        </div>
+        <div class="content">
+            <iframe id="app-frame" src="about:blank"></iframe>
+        </div>
+    </div>
+
+    <script>
+        const config = window.BELGRADE_CONFIG;
+        document.getElementById('user-info').innerText = config.user_id;
+
+        function loadApp(appId, bundle) {
+            const frame = document.getElementById('app-frame');
+            const title = document.getElementById('app-title');
+            
+            // In a real dashboard, we'd use the current domain
+            const url = `/ui/${appId}/${bundle}/`;
+            frame.src = url;
+            title.innerText = appId.charAt(0).toUpperCase() + appId.slice(1);
+            
+            // Update active state
+            document.querySelectorAll('.nav-item').forEach(el => el.classList.remove('active'));
+            event.target.classList.add('active');
+        }
+
+        // Initial load
+        window.onload = () => {
+            document.getElementById('app-title').innerText = "Welcome";
+            document.getElementById('app-frame').srcdoc = `
+                <div style="font-family: sans-serif; padding: 3rem; text-align: center; color: #333;">
+                    <h1>Zdravo, ${config.user_id}!</h1>
+                    <p>Select an app from the sidebar to get started.</p>
+                </div>
+            `;
+        };
+    </script>
+</body>
+</html>
