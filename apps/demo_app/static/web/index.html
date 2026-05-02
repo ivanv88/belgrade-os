@@ -1,0 +1,82 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>System Integration Demo</title>
+    <style>
+        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif; padding: 2rem; background: #f0f2f5; }
+        .container { max-width: 600px; margin: 0 auto; background: white; padding: 2rem; border-radius: 12px; box-shadow: 0 4px 6px rgba(0,0,0,0.05); }
+        h1 { color: #1a73e8; margin-top: 0; }
+        .service-list { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; margin: 2rem 0; }
+        .service-item { padding: 0.75rem; background: #f8f9fa; border-radius: 8px; border-left: 4px solid #dee2e6; font-size: 0.9rem; }
+        .service-item.active { border-left-color: #34a853; background: #e6f4ea; }
+        button { background: #1a73e8; color: white; border: none; padding: 1rem 2rem; border-radius: 8px; font-weight: bold; cursor: pointer; width: 100%; transition: background 0.2s; }
+        button:hover { background: #1765cf; }
+        #log { margin-top: 1.5rem; font-family: monospace; background: #202124; color: #f8f9fa; padding: 1rem; border-radius: 8px; font-size: 0.85rem; max-height: 200px; overflow-y: auto; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🏗️ System Demo</h1>
+        <p>Click below to run an end-to-end integration test of all Belgrade OS services.</p>
+        
+        <div class="service-list">
+            <div class="service-item active">Gateway (UI)</div>
+            <div class="service-item" id="s-api">Gateway (API)</div>
+            <div class="service-item" id="s-bridge">Bridge (Rust)</div>
+            <div class="service-item" id="s-infer">Inference (Gemini)</div>
+            <div class="service-item" id="s-vault">Vault Service</div>
+            <div class="service-item" id="s-notify">Notification</div>
+        </div>
+
+        <button onclick="runTest()">Run Integration Test</button>
+        <div id="log">Logs will appear here...</div>
+    </div>
+
+    <script>
+        const config = window.BELGRADE_CONFIG;
+        const logger = document.getElementById('log');
+
+        function addLog(msg) {
+            const entry = document.createElement('div');
+            entry.innerText = `> ${new Date().toLocaleTimeString()}: ${msg}`;
+            logger.appendChild(entry);
+            logger.scrollTop = logger.scrollHeight;
+        }
+
+        async function runTest() {
+            addLog("Initiating test sequence...");
+            document.getElementById('s-api').classList.add('active');
+
+            try {
+                const response = await fetch(`${config.gateway_url}/execute`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        tool_name: "demo_app:run_full_test",
+                        input_json: JSON.stringify({ user_prompt: "Test the Belgrade OS foundation" }),
+                        trace_id: "demo-" + Math.random().toString(36).substring(7)
+                    })
+                });
+
+                const data = await response.json();
+                
+                if (data.success) {
+                    addLog("Test successful!");
+                    addLog("Vault file created: " + JSON.parse(data.output_json).vault_path);
+                    
+                    // Mark all as active
+                    ['s-bridge', 's-infer', 's-vault', 's-notify'].forEach(id => {
+                        document.getElementById(id).classList.add('active');
+                    });
+                } else {
+                    addLog("Error: " + data.error);
+                }
+            } catch (e) {
+                addLog("Network Error: " + e.message);
+            }
+        }
+    </script>
+</body>
+</html>

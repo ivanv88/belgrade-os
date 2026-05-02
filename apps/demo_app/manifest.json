@@ -1,0 +1,15 @@
+{
+  "app_id": "demo_app",
+  "name": "System Integration Demo",
+  "description": "Tests every service in the Belgrade OS ecosystem.",
+  "ui": {
+    "enabled": true,
+    "bundles": {
+      "web": {
+        "type": "spa",
+        "path": "static/web/",
+        "entry": "index.html"
+      }
+    }
+  }
+}
