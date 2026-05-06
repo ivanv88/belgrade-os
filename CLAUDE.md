@@ -21,10 +21,11 @@ make test
 make dev                         # docker-compose up -d redis tunnel (does NOT start db)
 
 # Per-service tests
-cd gateway  && go test ./... -v
-cd runner   && python3 -m pytest tests/ -v
-cd inference && python3 -m pytest tests/ -v
-cd bridge   && cargo test
+cd gateway      && go test ./... -v
+cd runner       && python3 -m pytest tests/ -v
+cd inference    && python3 -m pytest tests/ -v
+cd notification && python3 -m pytest tests/ -v
+cd bridge       && cargo test
 
 # Wipe generated artifacts
 make clean
@@ -62,11 +63,13 @@ browser / Obsidian
 
 | Dir | Language | Role |
 |---|---|---|
-| `gateway/` | Go | HTTP entry point — JWT auth, task ingestion, SSE proxy |
+| `gateway/` | Go | HTTP entry point — JWT auth, task ingestion, SSE proxy, static UI serving |
 | `inference/` | Python | Inference Controller — calls Claude API, drives tool loop |
 | `runner/` | Python | Resource Runner — executes tool calls from apps |
-| `bridge/` | Rust | Capability Bridge — tool registry, serves tool lists |
-| `platform_controller/` | Python | App lifecycle manager — supervises app processes, dynamic cron scheduling via APScheduler |
+| `bridge/` | Rust | Capability Bridge — tool registry, write-through Redis cache |
+| `notification/` | Python | Notification Service — Redis stream consumer, ntfy driver, DLO |
+| `vault_service/` | Python | Vault Service — conflict-free Obsidian writes via Redis streams |
+| `platform_controller/` | Python | App lifecycle manager — supervises app processes, manifest injection, APScheduler cron |
 
 ### Apps & SDK
 
@@ -86,6 +89,8 @@ Apps register their tools at startup via `POST /v1/register` on the bridge, and 
 | `tasks:inbound` | Stream (XREADGROUP) | Gateway → Inference Controller |
 | `tasks:tool_calls` | Stream (XREADGROUP) | Inference Controller → Resource Runner |
 | `tasks:tool_results` | Stream (XREADGROUP) | Resource Runner → Inference Controller |
+| `tasks:notifications` | Stream (XREADGROUP) | SDK `ctx.notify()` → Notification Service |
+| `tasks:vault_ops` | Stream (XREADGROUP) | SDK `ctx.io` / apps → Vault Service |
 | `sse:{task_id}` | Pub/Sub | Inference Controller → Gateway → browser |
 | `lease:{worker_id}` | Key (TTL) | Resource Runner worker leases |
 
@@ -97,15 +102,19 @@ Generated outputs (gitignored, rebuilt with `make proto`):
 - `gateway/gen/belgrade_os.pb.go`
 - `runner/gen/belgrade_os_pb2.py`
 - `inference/gen/belgrade_os_pb2.py`
+- `notification/gen/belgrade_os_pb2.py`
+- `sdk/belgrade_sdk/gen/belgrade_os_pb2.py`
 - `bridge/` — built by `cargo build` via `bridge/build.rs` (prost)
 
-Key message types: `Task`, `ToolCall`, `ToolResult`, `ThoughtEvent`, `Tool`, `AppToolsRegistration`, `ToolListResponse`, `WorkerLease`. All carry `trace_id` for distributed tracing.
+Key message types: `Task`, `ToolCall`, `ToolResult`, `ThoughtEvent`, `Tool`, `AppToolsRegistration`, `ToolListResponse`, `WorkerLease`, `NotificationRequest`. All carry `trace_id` for distributed tracing.
 
 ### Gateway (`gateway/`)
 
 - `POST /v1/tasks` — validates `Cf-Access-Jwt-Assertion` (Cloudflare Zero Trust RS256 JWT), extracts `user_id` from `sub` claim, builds `Task` proto, XADDs to `tasks:inbound`
 - When `stream: true` in request body: upgrades response to `text/event-stream`, subscribes to `sse:{task_id}` Pub/Sub, proxies `ThoughtEvent` payloads as SSE
+- `GET /ui/{app_id}/{bundle_id}/...` — serves static assets from `apps/{app_id}/static/{bundle_id}/`; enforces path containment; injects per-app config into `index.html` responses
 - JWKS fetched from `https://${CF_TEAM_DOMAIN}.cloudflareaccess.com/cdn-cgi/access/certs`, cached 24 h
+- Auth: `gateway/auth/` sub-package; Redis: `gateway/redis/` sub-package
 
 ### Environment variables
 
