@@ -16,7 +16,7 @@ class RegisterRequest(BaseModel):
 class EventPayload(BaseModel):
     topic: str
     payload: Any
-    app_id: str
+    app_id: Optional[str] = None
     tenant_id: Optional[str] = None
     trace_id: str
 
