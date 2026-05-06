@@ -13,13 +13,21 @@ import (
 
 type Handler struct {
 	AppsRoot   string
+	absRoot    string // resolved once at construction; never changes
 	Redis      *redis.RedisClient
 	GatewayURL string
 }
 
 func NewHandler(appsRoot string, redis *redis.RedisClient, gatewayURL string) *Handler {
+	abs, err := filepath.Abs(appsRoot)
+	if err != nil {
+		// If the working directory is unresolvable, the process is in an
+		// undefined state. Panic is preferable to silently serving any file.
+		panic(fmt.Sprintf("ui: cannot resolve appsRoot %q: %v", appsRoot, err))
+	}
 	return &Handler{
 		AppsRoot:   appsRoot,
+		absRoot:    abs,
 		Redis:      redis,
 		GatewayURL: gatewayURL,
 	}
@@ -77,9 +85,18 @@ func (h *Handler) ServeAsset(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
 	}
-	absRoot, _ := filepath.Abs(h.AppsRoot)
-	if !strings.HasPrefix(absPath, absRoot) {
+
+	// Use filepath.Rel instead of strings.HasPrefix to prevent sibling-directory bypass.
+	rel, err := filepath.Rel(h.absRoot, absPath)
+	if err != nil || strings.HasPrefix(rel, "..") {
 		http.Error(w, "forbidden", http.StatusForbidden)
+		return
+	}
+
+	// Reject directories — http.ServeFile would render a listing.
+	info, err := os.Stat(filePath)
+	if err != nil || info.IsDir() {
+		http.NotFound(w, r)
 		return
 	}
 
