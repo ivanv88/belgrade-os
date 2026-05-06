@@ -1,0 +1,20 @@
+[Unit]
+Description=Belgrade OS Hardware Watchdog
+Documentation=https://github.com/ivanvladisavljevic/belgrade-os
+After=docker.service
+Requires=docker.service
+
+[Service]
+Type=simple
+User=root
+ExecStart=/usr/bin/python3 /opt/belgrade-os/watchdog.py
+Restart=always
+RestartSec=5
+TimeoutStopSec=10
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=beg-os-watchdog
+Environment=WATCHDOG_NTFY_URL=
+
+[Install]
+WantedBy=multi-user.target
