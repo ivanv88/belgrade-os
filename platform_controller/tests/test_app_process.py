@@ -66,3 +66,31 @@ def test_start_uses_manifest_driver_over_global(tmp_path):
         asyncio.run(app.start())
 
     assert captured_env["BEG_OS_NOTIFICATION_DRIVER"] == "firebase"
+
+
+def test_load_manifest_reads_json_file(tmp_path):
+    """_load_manifest must parse JSON from manifest.json — requires json to be imported."""
+    import json as _json
+    manifest_data = {"notifications": {"driver": "firebase"}, "version": "1.0"}
+    (tmp_path / "manifest.json").write_text(_json.dumps(manifest_data))
+
+    app = AppProcess(app_id="shopping", path=tmp_path, port=9001)
+    result = app._load_manifest()
+
+    assert result == manifest_data
+    assert result["notifications"]["driver"] == "firebase"
+
+
+def test_load_manifest_returns_empty_dict_when_absent(tmp_path):
+    """_load_manifest returns {} when manifest.json does not exist."""
+    app = AppProcess(app_id="shopping", path=tmp_path, port=9001)
+    result = app._load_manifest()
+    assert result == {}
+
+
+def test_load_manifest_returns_empty_dict_on_invalid_json(tmp_path):
+    """_load_manifest swallows parse errors and returns {}."""
+    (tmp_path / "manifest.json").write_text("not valid json {{{")
+    app = AppProcess(app_id="shopping", path=tmp_path, port=9001)
+    result = app._load_manifest()
+    assert result == {}
