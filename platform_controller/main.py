@@ -15,12 +15,31 @@ from sqlalchemy.orm import declarative_base
 
 from scheduler import SchedulerManager, ScheduleEntry, PermissionSyncManager
 
+import re
+import secrets
+from fastapi import Depends
+from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
+
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 logger = logging.getLogger(__name__)
 
 # --- Database Setup ---
 DB_URL = os.getenv("DATABASE_URL", "postgresql+asyncpg://postgres:postgres@localhost:5432/postgres")
 REDIS_URL = os.getenv("BEG_OS_REDIS_URL", "redis://localhost:6379")
+CONTROLLER_TOKEN = os.getenv("CONTROLLER_API_TOKEN", "")
+_bearer = HTTPBearer(auto_error=False)
+_APP_ID_RE = re.compile(r"^[a-zA-Z0-9_-]{1,64}$")
+
+
+def _require_token(
+    creds: Optional[HTTPAuthorizationCredentials] = Depends(_bearer),
+) -> None:
+    if not CONTROLLER_TOKEN:
+        raise HTTPException(status_code=500, detail="CONTROLLER_API_TOKEN not set")
+    if creds is None or not secrets.compare_digest(creds.credentials, CONTROLLER_TOKEN):
+        raise HTTPException(status_code=403, detail="forbidden")
+
+
 engine = create_async_engine(DB_URL)
 SessionLocal = async_sessionmaker(engine, expire_on_commit=False)
 
@@ -177,7 +196,9 @@ async def startup_event():
             await scheduler_manager.add_schedule(entry)
 
 @app.post("/apps/reload")
-async def reload_app(action: AppAction):
+async def reload_app(action: AppAction, _: None = Depends(_require_token)):
+    if not _APP_ID_RE.match(action.app_id):
+        raise HTTPException(status_code=400, detail="invalid app_id: must match ^[a-zA-Z0-9_-]{1,64}$")
     await app_supervisor.start_app(action.app_id)
     return {"status": "reloaded", "app_id": action.app_id}
 
