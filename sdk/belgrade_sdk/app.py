@@ -88,7 +88,7 @@ class BelgradeApp:
                 return ExecuteResponse(success=False, error=f"Tool {req.tool_name} not found")
 
             ctx = self._build_context(
-                user_id=req.user_id if hasattr(req, "user_id") else None,
+                user_id=req.user_id,
                 tenant_id=req.tenant_id,
                 trace_id=req.trace_id,
             )
@@ -154,7 +154,8 @@ class BelgradeApp:
         async def on_startup():
             if self.db_url:
                 self._db_engine = create_async_engine(self.db_url)
-            self._redis_pool = AioRedis.from_url(self.redis_url, decode_responses=False)
+            if self.redis_url:
+                self._redis_pool = AioRedis.from_url(self.redis_url, decode_responses=False)
             await self.register_with_bridge()
 
         @self.app.on_event("shutdown")
