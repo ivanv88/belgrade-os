@@ -160,10 +160,21 @@ async def process_untrusted_call(
     result.user_id = call.user_id
     result.tenant_id = call.tenant_id
 
+    raw_app_id = call.tool_name.split(":")[0] if ":" in call.tool_name else call.tool_name
+    if not _APP_ID_RE.match(raw_app_id):
+        result.success = False
+        result.error = f"invalid app_id derived from tool_name: {raw_app_id!r}"
+        result.duration_ms = 0
+        await rdb.xadd(
+            "tasks:tool_results",
+            {b"data": result.SerializeToString(), b"task_id": call.task_id.encode()},
+        )
+        return
+
     try:
         output = await runner.run(
             task_id=call.task_id,
-            app_id=call.tool_name.split(":")[0] if ":" in call.tool_name else call.tool_name,
+            app_id=raw_app_id,
             input_data={"tool_name": call.tool_name, "input_json": call.input_json},
         )
         result.success = True
@@ -224,10 +235,11 @@ async def _untrusted_consumer_loop(redis_url: str) -> None:
                     continue
                 try:
                     await process_untrusted_call(call_bytes, _ephemeral_runner, rdb)
-                except Exception:
-                    logger.exception("unhandled error in untrusted consumer msg=%s", msg_id)
-                finally:
                     await rdb.xack(STREAM, GROUP, msg_id)
+                except Exception:
+                    logger.exception(
+                        "unhandled error msg=%s — not ACKed, will retry on restart", msg_id
+                    )
         except Exception as exc:
             if "ConnectionError" in type(exc).__name__:
                 logger.error("untrusted consumer lost Redis connection, retrying in 5s")

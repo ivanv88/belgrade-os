@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import re
 import shutil
 from pathlib import Path
 
@@ -10,6 +11,7 @@ logger = logging.getLogger(__name__)
 
 _MAX_OUTPUT_BYTES = 1_000_000  # 1 MB
 _TIMEOUT_S = 30.0
+_ID_RE = re.compile(r"^[a-zA-Z0-9_-]{1,64}$")
 
 
 class OutputValidationError(Exception):
@@ -22,6 +24,10 @@ class EphemeralRunner:
         self.apps_root = Path(apps_root)
 
     async def run(self, task_id: str, app_id: str, input_data: dict) -> dict:
+        if not _ID_RE.match(task_id):
+            raise ValueError(f"invalid task_id: {task_id!r}")
+        if not _ID_RE.match(app_id):
+            raise ValueError(f"invalid app_id: {app_id!r}")
         work_dir = Path(f"/tmp/beg-{task_id}")
         work_dir.mkdir(parents=True, exist_ok=True)
         try:
@@ -37,6 +43,10 @@ class EphemeralRunner:
     async def _run_container(self, task_id: str, app_id: str, work_dir: Path) -> None:
         image = f"beg-os-{app_id}:latest"
         app_dir = self.apps_root / app_id
+        try:
+            app_dir.resolve().relative_to(self.apps_root.resolve())
+        except ValueError:
+            raise ValueError(f"app_id {app_id!r} escapes apps_root")
         proc = await asyncio.create_subprocess_exec(
             "docker", "run",
             "--rm",
@@ -52,7 +62,15 @@ class EphemeralRunner:
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
         )
-        stdout, stderr = await proc.communicate()
+        try:
+            stdout, stderr = await proc.communicate()
+        except asyncio.CancelledError:
+            try:
+                proc.kill()
+            except ProcessLookupError:
+                pass
+            await proc.wait()
+            raise
         if proc.returncode != 0:
             raise RuntimeError(
                 f"Container exited {proc.returncode}: {stderr.decode(errors='replace')[:500]}"
