@@ -111,8 +111,11 @@ user bridge on >${BRIDGE_PASS} ~bridge:* +ping +get +set +hget +hset +hmget +hde
 user controller on >${CONTROLLER_PASS} ~perms:* ~tasks:tool_results ~tasks:untrusted_calls +ping +hset +hget +hmget +del +xadd +xreadgroup +xack +xgroup
 user app on >${APP_PASS} ~tasks:vault_ops ~tasks:notifications +ping +xadd
 EOF
-    # 0644: Redis (UID 999) can read even if it doesn't own the file.
-    chmod 644 config/redis.acl
+    # 0640: owner read/write, group read-only, world no access.
+    # chgrp 999 (Redis GID) lets the container read the file without world-readable exposure.
+    # Requires root; falls back gracefully if unavailable (e.g. macOS dev env).
+    chmod 640 config/redis.acl
+    chgrp 999 config/redis.acl 2>/dev/null || echo "ℹ️  chgrp 999 config/redis.acl failed — set group ownership to Redis GID manually for non-world-readable ACL."
 
     # Append per-service URLs to .env (idempotent: skip if already present)
     if ! grep -q "GATEWAY_REDIS_URL" .env 2>/dev/null; then

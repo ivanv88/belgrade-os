@@ -42,6 +42,7 @@ class EphemeralRunner:
 
     async def _run_container(self, task_id: str, app_id: str, work_dir: Path) -> None:
         image = f"beg-os-{app_id}:latest"
+        container_name = f"beg-{task_id}"
         app_dir = self.apps_root / app_id
         try:
             app_dir.resolve().relative_to(self.apps_root.resolve())
@@ -50,6 +51,7 @@ class EphemeralRunner:
         proc = await asyncio.create_subprocess_exec(
             "docker", "run",
             "--rm",
+            "--name", container_name,
             "--network", "none",
             "--security-opt", f"seccomp={self.seccomp_profile}",
             "--read-only",
@@ -65,6 +67,17 @@ class EphemeralRunner:
         try:
             stdout, stderr = await proc.communicate()
         except asyncio.CancelledError:
+            # Force-remove the container by name — more reliable than killing
+            # the CLI process, which may leave the container running in the daemon.
+            try:
+                rm = await asyncio.create_subprocess_exec(
+                    "docker", "rm", "-f", container_name,
+                    stdout=asyncio.subprocess.DEVNULL,
+                    stderr=asyncio.subprocess.DEVNULL,
+                )
+                await rm.wait()
+            except Exception:
+                pass
             try:
                 proc.kill()
             except ProcessLookupError:

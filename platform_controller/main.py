@@ -184,7 +184,7 @@ async def process_untrusted_call(
         result.error = "execution timeout after 30s"
         logger.error("ephemeral timeout task_id=%s call_id=%s tool=%s",
                      call.task_id, call.call_id, call.tool_name)
-    except (OutputValidationError, RuntimeError) as exc:
+    except (OutputValidationError, RuntimeError, ValueError) as exc:
         result.success = False
         result.error = str(exc)
         logger.error("ephemeral error task_id=%s call_id=%s: %s",
