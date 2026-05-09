@@ -81,7 +81,7 @@ class AppProcess:
         env["BEG_OS_CALLBACK_URL"] = f"http://localhost:{self.port}"
         env["BEG_OS_BRIDGE_URL"] = os.getenv("BEG_OS_BRIDGE_URL", "http://localhost:8081")
         env["BEG_OS_DB_URL"] = DB_URL
-        env["BEG_OS_REDIS_URL"] = os.getenv("BEG_OS_REDIS_URL", "redis://localhost:6379")
+        env["BEG_OS_REDIS_URL"] = os.getenv("APP_REDIS_URL") or os.getenv("BEG_OS_REDIS_URL", "redis://localhost:6379")
         env["BEG_OS_NOTIFICATION_DRIVER"] = notification_driver
 
         cmd = ["python3", str(self.path / "main.py")]

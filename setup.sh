@@ -98,6 +98,7 @@ generate_acl() {
     VAULT_PASS=$(openssl rand -hex 32)
     BRIDGE_PASS=$(openssl rand -hex 32)
     CONTROLLER_PASS=$(openssl rand -hex 32)
+    APP_PASS=$(openssl rand -hex 32)
 
     cat > config/redis.acl << EOF
 user default off nopass nocommands
@@ -106,10 +107,12 @@ user inference on >${INFERENCE_PASS} ~tasks:* &sse:* +ping +xreadgroup +xread +x
 user runner on >${RUNNER_PASS} ~tasks:tool_calls ~tasks:tool_results ~lease:* +ping +xreadgroup +xadd +xack +xgroup +set +del
 user notification on >${NOTIFICATION_PASS} ~tasks:notifications +ping +xreadgroup +xack +xgroup
 user vault on >${VAULT_PASS} ~tasks:vault_ops ~vault:lock:* +ping +xreadgroup +xack +xgroup +set +del
-user bridge on >${BRIDGE_PASS} ~registry:* +ping +get +set +hget +hset +hmget +hdel +del +sadd +srem +smembers
+user bridge on >${BRIDGE_PASS} ~bridge:* +ping +get +set +hget +hset +hmget +hdel +del +sadd +srem +smembers +hgetall +keys
 user controller on >${CONTROLLER_PASS} ~perms:* ~tasks:tool_results ~tasks:untrusted_calls +ping +hset +hget +hmget +del +xadd +xreadgroup +xack +xgroup
+user app on >${APP_PASS} ~tasks:vault_ops ~tasks:notifications +ping +xadd
 EOF
-    chmod 600 config/redis.acl
+    # 0644: Redis (UID 999) can read even if it doesn't own the file.
+    chmod 644 config/redis.acl
 
     # Append per-service URLs to .env (idempotent: skip if already present)
     if ! grep -q "GATEWAY_REDIS_URL" .env 2>/dev/null; then
@@ -123,6 +126,7 @@ NOTIFICATION_REDIS_URL=redis://notification:${NOTIFICATION_PASS}@localhost:6379
 VAULT_REDIS_URL=redis://vault:${VAULT_PASS}@localhost:6379
 BRIDGE_REDIS_URL=redis://bridge:${BRIDGE_PASS}@localhost:6379
 CONTROLLER_REDIS_URL=redis://controller:${CONTROLLER_PASS}@localhost:6379
+APP_REDIS_URL=redis://app:${APP_PASS}@localhost:6379
 EOF
     fi
 
