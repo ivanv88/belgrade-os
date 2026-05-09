@@ -11,7 +11,8 @@ deps:
 	             -r runner/requirements-dev.txt \
 	             -r inference/requirements-dev.txt \
 	             -r notification/requirements-dev.txt \
-	             -r vault_service/requirements-dev.txt
+	             -r vault_service/requirements-dev.txt \
+	             -r platform_controller/requirements-dev.txt
 
 # ─── Proto codegen ────────────────────────────────────────────────────────────
 proto: gateway/gen/belgrade_os.pb.go runner/gen/belgrade_os_pb2.py inference/gen/belgrade_os_pb2.py notification/gen/belgrade_os_pb2.py sdk/belgrade_sdk/gen/belgrade_os_pb2.py vault_service/gen/belgrade_os_pb2.py
@@ -62,6 +63,7 @@ test: proto
 	cd runner && python3 -m pytest tests/ -v
 	cd inference && python3 -m pytest tests/ -v
 	cd notification && python3 -m pytest tests/ -v
+	cd platform_controller && python3 -m pytest tests/ -v
 	cd bridge && cargo test
 
 # ─── Dev infrastructure ───────────────────────────────────────────────────────
