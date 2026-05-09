@@ -3,6 +3,6 @@ user gateway on >GATEWAY_REDIS_PASSWORD ~perms:* ~tasks:inbound &sse:* +ping +hg
 user inference on >INFERENCE_REDIS_PASSWORD ~tasks:* &sse:* +ping +xreadgroup +xread +xadd +xack +xgroup +publish
 user runner on >RUNNER_REDIS_PASSWORD ~tasks:tool_calls ~tasks:tool_results ~lease:* +ping +xreadgroup +xadd +xack +xgroup +set +del
 user notification on >NOTIFICATION_REDIS_PASSWORD ~tasks:notifications +ping +xreadgroup +xack +xgroup
-user vault on >VAULT_REDIS_PASSWORD ~tasks:vault_ops +ping +xreadgroup +xack +xgroup
+user vault on >VAULT_REDIS_PASSWORD ~tasks:vault_ops ~vault:lock:* +ping +xreadgroup +xack +xgroup +set +del
 user bridge on >BRIDGE_REDIS_PASSWORD ~registry:* +ping +get +set +hget +hset +hmget +hdel +del +sadd +srem +smembers
 user controller on >CONTROLLER_REDIS_PASSWORD ~perms:* ~tasks:tool_results ~tasks:untrusted_calls +ping +hset +hget +hmget +del +xadd +xreadgroup +xack +xgroup

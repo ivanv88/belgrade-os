@@ -105,7 +105,7 @@ user gateway on >${GATEWAY_PASS} ~perms:* ~tasks:inbound &sse:* +ping +hget +hmg
 user inference on >${INFERENCE_PASS} ~tasks:* &sse:* +ping +xreadgroup +xread +xadd +xack +xgroup +publish
 user runner on >${RUNNER_PASS} ~tasks:tool_calls ~tasks:tool_results ~lease:* +ping +xreadgroup +xadd +xack +xgroup +set +del
 user notification on >${NOTIFICATION_PASS} ~tasks:notifications +ping +xreadgroup +xack +xgroup
-user vault on >${VAULT_PASS} ~tasks:vault_ops +ping +xreadgroup +xack +xgroup
+user vault on >${VAULT_PASS} ~tasks:vault_ops ~vault:lock:* +ping +xreadgroup +xack +xgroup +set +del
 user bridge on >${BRIDGE_PASS} ~registry:* +ping +get +set +hget +hset +hmget +hdel +del +sadd +srem +smembers
 user controller on >${CONTROLLER_PASS} ~perms:* ~tasks:tool_results ~tasks:untrusted_calls +ping +hset +hget +hmget +del +xadd +xreadgroup +xack +xgroup
 EOF
