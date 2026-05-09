@@ -101,13 +101,13 @@ generate_acl() {
 
     cat > config/redis.acl << EOF
 user default off nopass nocommands
-user gateway on >${GATEWAY_PASS} ~perms:* ~tasks:inbound &sse:* +hget +hmget +xadd +subscribe
-user inference on >${INFERENCE_PASS} ~tasks:* &sse:* +xreadgroup +xread +xadd +xack +xgroup +publish
-user runner on >${RUNNER_PASS} ~tasks:tool_calls ~tasks:tool_results +xreadgroup +xadd +xack +xgroup
-user notification on >${NOTIFICATION_PASS} ~tasks:notifications +xreadgroup +xack +xgroup
-user vault on >${VAULT_PASS} ~tasks:vault_ops +xreadgroup +xack +xgroup
-user bridge on >${BRIDGE_PASS} ~registry:* +get +set +hget +hset +hmget
-user controller on >${CONTROLLER_PASS} ~perms:* ~tasks:tool_results ~tasks:untrusted_calls +hset +hget +hmget +xadd +xreadgroup +xack +xgroup
+user gateway on >${GATEWAY_PASS} ~perms:* ~tasks:inbound &sse:* +ping +hget +hmget +xadd +subscribe
+user inference on >${INFERENCE_PASS} ~tasks:* &sse:* +ping +xreadgroup +xread +xadd +xack +xgroup +publish
+user runner on >${RUNNER_PASS} ~tasks:tool_calls ~tasks:tool_results ~lease:* +ping +xreadgroup +xadd +xack +xgroup +set +del
+user notification on >${NOTIFICATION_PASS} ~tasks:notifications +ping +xreadgroup +xack +xgroup
+user vault on >${VAULT_PASS} ~tasks:vault_ops +ping +xreadgroup +xack +xgroup
+user bridge on >${BRIDGE_PASS} ~registry:* +ping +get +set +hget +hset +hmget +hdel +del +sadd +srem +smembers
+user controller on >${CONTROLLER_PASS} ~perms:* ~tasks:tool_results ~tasks:untrusted_calls +ping +hset +hget +hmget +del +xadd +xreadgroup +xack +xgroup
 EOF
     chmod 600 config/redis.acl
 
