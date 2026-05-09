@@ -12,7 +12,7 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(mess
 log = logging.getLogger(__name__)
 
 VAULT_ROOT = Path(os.getenv("BEG_OS_VAULT_PATH", "/tmp/belgrade-vault"))
-REDIS_URL = os.getenv("BEG_OS_REDIS_URL", "redis://localhost:6379")
+REDIS_URL = os.getenv("VAULT_REDIS_URL") or os.getenv("BEG_OS_REDIS_URL", "redis://localhost:6379")
 WORKER_ID = socket.gethostname()
 
 async def _consumer_loop(redis: RedisClient) -> None:

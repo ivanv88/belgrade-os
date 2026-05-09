@@ -38,3 +38,21 @@ func TestLoadConfigFromEnv(t *testing.T) {
 		t.Fatalf("expected myaud, got %s", cfg.CFAudience)
 	}
 }
+
+func TestGatewayRedisURLPrecedence(t *testing.T) {
+	t.Setenv("GATEWAY_REDIS_URL", "redis://gateway:pw@localhost:6379")
+	t.Setenv("REDIS_URL", "redis://generic:6379")
+	cfg := LoadConfig()
+	if cfg.RedisURL != "redis://gateway:pw@localhost:6379" {
+		t.Fatalf("GATEWAY_REDIS_URL should take precedence, got %s", cfg.RedisURL)
+	}
+}
+
+func TestRedisURLFallbackToGeneric(t *testing.T) {
+	os.Unsetenv("GATEWAY_REDIS_URL")
+	t.Setenv("REDIS_URL", "redis://fallback:6379")
+	cfg := LoadConfig()
+	if cfg.RedisURL != "redis://fallback:6379" {
+		t.Fatalf("should fall back to REDIS_URL, got %s", cfg.RedisURL)
+	}
+}

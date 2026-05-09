@@ -25,7 +25,7 @@ logger = logging.getLogger(__name__)
 
 # --- Database Setup ---
 DB_URL = os.getenv("DATABASE_URL", "postgresql+asyncpg://postgres:postgres@localhost:5432/postgres")
-REDIS_URL = os.getenv("BEG_OS_REDIS_URL", "redis://localhost:6379")
+REDIS_URL = os.getenv("CONTROLLER_REDIS_URL") or os.getenv("BEG_OS_REDIS_URL", "redis://localhost:6379")
 CONTROLLER_TOKEN = os.getenv("CONTROLLER_API_TOKEN", "")
 _bearer = HTTPBearer(auto_error=False)
 _APP_ID_RE = re.compile(r"^[a-zA-Z0-9_-]{1,64}$")

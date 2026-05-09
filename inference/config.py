@@ -1,11 +1,14 @@
 import socket
 from typing import Literal, Optional
-from pydantic import model_validator
+from pydantic import Field, AliasChoices, model_validator
 from pydantic_settings import BaseSettings
 
 
 class Config(BaseSettings):
-    redis_url: str = "redis://localhost:6379"
+    redis_url: str = Field(
+        default="redis://localhost:6379",
+        validation_alias=AliasChoices("INFERENCE_REDIS_URL", "REDIS_URL"),
+    )
     provider: Literal["anthropic", "gemini", "ollama"]
     model: str
     max_tokens: int = 8192
@@ -15,7 +18,7 @@ class Config(BaseSettings):
     google_api_key: Optional[str] = None
     ollama_base_url: str = "http://localhost:11434"
 
-    model_config = {"env_file": ".env"}
+    model_config = {"env_file": ".env", "populate_by_name": True}
 
     @model_validator(mode="after")
     def check_credentials(self) -> "Config":

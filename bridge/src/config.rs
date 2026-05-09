@@ -24,7 +24,8 @@ impl Config {
                 .unwrap_or_else(|| "https://ntfy.sh".to_string()),
             ntfy_topic: lookup("NTFY_TOPIC")
                 .unwrap_or_else(|| "belgrade-os".to_string()),
-            redis_url: lookup("REDIS_URL")
+            redis_url: lookup("BRIDGE_REDIS_URL")
+                .or_else(|| lookup("REDIS_URL"))
                 .unwrap_or_else(|| "redis://localhost:6379".to_string()),
         }
     }
@@ -75,5 +76,20 @@ mod tests {
     fn test_redis_url_from_env() {
         let cfg = Config::from_map(lookup(&[("REDIS_URL", "redis://redis:6379")]));
         assert_eq!(cfg.redis_url, "redis://redis:6379");
+    }
+
+    #[test]
+    fn test_bridge_redis_url_takes_precedence() {
+        let cfg = Config::from_map(lookup(&[
+            ("BRIDGE_REDIS_URL", "redis://bridge:pw@localhost:6379"),
+            ("REDIS_URL", "redis://generic:6379"),
+        ]));
+        assert_eq!(cfg.redis_url, "redis://bridge:pw@localhost:6379");
+    }
+
+    #[test]
+    fn test_bridge_redis_url_falls_back_to_redis_url() {
+        let cfg = Config::from_map(lookup(&[("REDIS_URL", "redis://fallback:6379")]));
+        assert_eq!(cfg.redis_url, "redis://fallback:6379");
     }
 }
