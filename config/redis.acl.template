@@ -1,0 +1,8 @@
+user default off nopass nocommands
+user gateway on >GATEWAY_REDIS_PASSWORD ~perms:* ~tasks:inbound &sse:* +hget +hmget +xadd +subscribe
+user inference on >INFERENCE_REDIS_PASSWORD ~tasks:* &sse:* +xreadgroup +xread +xadd +xack +xgroup +publish
+user runner on >RUNNER_REDIS_PASSWORD ~tasks:tool_calls ~tasks:tool_results +xreadgroup +xadd +xack +xgroup
+user notification on >NOTIFICATION_REDIS_PASSWORD ~tasks:notifications +xreadgroup +xack +xgroup
+user vault on >VAULT_REDIS_PASSWORD ~tasks:vault_ops +xreadgroup +xack +xgroup
+user bridge on >BRIDGE_REDIS_PASSWORD ~registry:* +get +set +hget +hset +hmget
+user controller on >CONTROLLER_REDIS_PASSWORD ~perms:* ~tasks:tool_results ~tasks:untrusted_calls +hset +hget +hmget +xadd +xreadgroup +xack +xgroup

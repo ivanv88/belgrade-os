@@ -10,8 +10,8 @@ pub mod store;
 #[cfg(test)]
 mod tests {
     use super::belgrade_os::{
-        AppToolsRegistration, Task, ThoughtEvent, ThoughtEventType, Tool, ToolCall, ToolListResponse,
-        ToolResult, WorkerLease,
+        AppToolsRegistration, ExecutionMode, Task, ThoughtEvent, ThoughtEventType, Tool, ToolCall,
+        ToolListResponse, ToolResult, WorkerLease,
     };
 
     #[test]
@@ -22,6 +22,7 @@ mod tests {
             prompt: "What's for dinner?".to_string(),
             created_at_ms: 1_700_000_000_000,
             trace_id: "trace-abc".to_string(),
+            execution_mode: ExecutionMode::Trusted as i32,
         };
         assert_eq!(task.task_id, "task-001");
         assert_eq!(task.trace_id, "trace-abc");
@@ -37,6 +38,7 @@ mod tests {
             trace_id: "trace-abc".to_string(),
             user_id: "user-1".to_string(),
             tenant_id: "tenant-1".to_string(),
+            execution_mode: ExecutionMode::Unspecified as i32,
         };
         assert_eq!(call.tool_name, "shopping:add_item");
         assert_eq!(call.trace_id, "trace-abc");

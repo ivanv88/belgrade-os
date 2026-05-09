@@ -8,11 +8,12 @@ option go_package = "belgrade-os/gateway/gen;belgrade_os";
 
 // Dropped by Edge Gateway into Redis Stream "tasks:inbound"
 message Task {
-  string task_id       = 1;  // UUID v4
-  string user_id       = 2;  // resolved from JWT sub claim
-  string prompt        = 3;
-  int64  created_at_ms = 4;  // Unix epoch milliseconds
-  string trace_id      = 5;  // propagated across all 5 services for distributed tracing
+  string        task_id        = 1;  // UUID v4
+  string        user_id        = 2;  // resolved from JWT sub claim
+  string        prompt         = 3;
+  int64         created_at_ms  = 4;  // Unix epoch milliseconds
+  string        trace_id       = 5;  // propagated across all 5 services for distributed tracing
+  ExecutionMode execution_mode = 6;
 }
 
 // MCP tool definition — namespaced by Capability Bridge (e.g. "shopping:add_item")
@@ -25,13 +26,14 @@ message Tool {
 
 // Tool call: Inference Controller → Redis Stream "tasks:tool_calls" → Resource Runner
 message ToolCall {
-  string call_id    = 1;  // UUID v4, unique per invocation
-  string task_id    = 2;  // parent Task.task_id
-  string tool_name  = 3;  // namespaced: "shopping:add_item"
-  string input_json = 4;  // JSON object matching Tool.input_schema_json
-  string trace_id   = 5;  // propagated from Task.trace_id for distributed tracing
-  string user_id    = 6;  // propagated from Task.user_id
-  string tenant_id  = 7;  // resolved by Inference Controller
+  string        call_id        = 1;  // UUID v4, unique per invocation
+  string        task_id        = 2;  // parent Task.task_id
+  string        tool_name      = 3;  // namespaced: "shopping:add_item"
+  string        input_json     = 4;  // JSON object matching Tool.input_schema_json
+  string        trace_id       = 5;  // propagated from Task.trace_id for distributed tracing
+  string        user_id        = 6;  // propagated from Task.user_id
+  string        tenant_id      = 7;  // resolved by Inference Controller
+  ExecutionMode execution_mode = 8;
 }
 
 // Tool result: Resource Runner → Redis Stream "tasks:tool_results" → Inference Controller
@@ -64,6 +66,12 @@ enum ThoughtEventType {
   RESPONSE_CHUNK                 = 3;
   DONE                           = 4;
   ERROR                          = 5;
+}
+
+enum ExecutionMode {
+  EXECUTION_MODE_UNSPECIFIED = 0;
+  TRUSTED                    = 1;
+  UNTRUSTED                  = 2;
 }
 
 // ─── Capability Bridge ────────────────────────────────────────────────────────

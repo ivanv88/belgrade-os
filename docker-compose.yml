@@ -67,7 +67,7 @@ services:
     pids_limit: 64
     command: >
       redis-server
-      --requirepass ${REDIS_PASSWORD}
+      --aclfile /usr/local/etc/redis/users.acl
       --appendonly yes
       --rename-command CONFIG ""
       --rename-command FLUSHALL ""
@@ -75,6 +75,7 @@ services:
       --rename-command DEBUG ""
     volumes:
       - ./data/redis:/data
+      - ./config/redis.acl:/usr/local/etc/redis/users.acl:ro
     networks:
       - core_net
       - compute_net
