@@ -15,7 +15,7 @@ import (
 func newTestHandler(t *testing.T, jwksURL string, rClient *redis.RedisClient) *Handler {
 	t.Helper()
 	cache := auth.NewTestCache(t, jwksURL)
-	return NewHandler(cache, rClient, "test-aud")
+	return NewHandler(cache, rClient, "test-aud", auth.TrustedSet{})
 }
 
 func requireRedis(t *testing.T) *redis.RedisClient {
@@ -64,7 +64,7 @@ func TestCreateTaskReturns202WithTaskID(t *testing.T) {
 
 func TestCreateTaskMissingAuthHeader(t *testing.T) {
 	cache := auth.NewTestCache(t, "http://localhost:0")
-	h := NewHandler(cache, nil, "aud")
+	h := NewHandler(cache, nil, "aud", auth.TrustedSet{})
 
 	req := httptest.NewRequest(http.MethodPost, "/v1/tasks", strings.NewReader(`{"prompt":"hi"}`))
 	w := httptest.NewRecorder()
@@ -82,7 +82,7 @@ func TestCreateTaskMissingPrompt(t *testing.T) {
 	defer srv.Close()
 
 	cache := auth.NewTestCache(t, srv.URL)
-	h := NewHandler(cache, nil, "test-aud")
+	h := NewHandler(cache, nil, "test-aud", auth.TrustedSet{})
 	tokenStr := auth.SignToken(t, key, kid, "user-prompt-test", "test-aud", time.Now().Add(time.Hour))
 
 	req := httptest.NewRequest(http.MethodPost, "/v1/tasks", strings.NewReader(`{}`))
@@ -102,7 +102,7 @@ func TestCreateTaskInvalidToken(t *testing.T) {
 	defer srv.Close()
 
 	cache := auth.NewTestCache(t, srv.URL)
-	h := NewHandler(cache, nil, "test-aud")
+	h := NewHandler(cache, nil, "test-aud", auth.TrustedSet{})
 
 	req := httptest.NewRequest(http.MethodPost, "/v1/tasks", strings.NewReader(`{"prompt":"hi"}`))
 	req.Header.Set("Cf-Access-Jwt-Assertion", "not.a.jwt")
@@ -111,5 +111,16 @@ func TestCreateTaskInvalidToken(t *testing.T) {
 
 	if w.Code != http.StatusUnauthorized {
 		t.Fatalf("expected 401, got %d", w.Code)
+	}
+}
+
+func TestHandlerTrustSetWiring(t *testing.T) {
+	trusted := auth.ParseTrustedUsers("alice@example.com")
+	h := NewHandler(nil, nil, "test-audience", trusted)
+	if !h.trustedUsers.Contains("alice@example.com") {
+		t.Fatal("alice should be trusted")
+	}
+	if h.trustedUsers.Contains("mallory@example.com") {
+		t.Fatal("mallory should not be trusted")
 	}
 }

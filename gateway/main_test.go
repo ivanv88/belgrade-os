@@ -20,7 +20,7 @@ import (
 func newTestServer(t *testing.T, jwksURL string, rClient *redis.RedisClient) *httptest.Server {
 	t.Helper()
 	cache := auth.NewTestCache(t, jwksURL)
-	h := NewHandler(cache, rClient, "e2e-aud")
+	h := NewHandler(cache, rClient, "e2e-aud", auth.TrustedSet{})
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /v1/tasks", h.CreateTask)
 	return httptest.NewServer(mux)

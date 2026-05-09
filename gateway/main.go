@@ -31,7 +31,7 @@ func main() {
 		log.Fatalf("redis ping: %v", err)
 	}
 
-	h := NewHandler(cache, rClient, cfg.CFAudience)
+	h := NewHandler(cache, rClient, cfg.CFAudience, auth.LoadTrustedUsers())
 	uiH := ui.NewHandler(cfg.AppsRoot, rClient, cfg.GatewayURL)
 
 	mux := http.NewServeMux()

@@ -13,9 +13,10 @@ import (
 )
 
 type taskRequest struct {
-	Prompt string `json:"prompt"`
-	AppID  string `json:"app_id"`
-	Stream bool   `json:"stream"`
+	Prompt        string `json:"prompt"`
+	AppID         string `json:"app_id"`
+	Stream        bool   `json:"stream"`
+	ExecutionMode string `json:"execution_mode"`
 }
 
 type taskResponse struct {
@@ -24,13 +25,14 @@ type taskResponse struct {
 }
 
 type Handler struct {
-	auth     *auth.JWKSCache
-	redis    *redis.RedisClient
-	audience string
+	auth         *auth.JWKSCache
+	redis        *redis.RedisClient
+	audience     string
+	trustedUsers auth.TrustedSet
 }
 
-func NewHandler(auth *auth.JWKSCache, redis *redis.RedisClient, audience string) *Handler {
-	return &Handler{auth: auth, redis: redis, audience: audience}
+func NewHandler(jwks *auth.JWKSCache, rClient *redis.RedisClient, audience string, trusted auth.TrustedSet) *Handler {
+	return &Handler{auth: jwks, redis: rClient, audience: audience, trustedUsers: trusted}
 }
 
 func (h *Handler) CreateTask(w http.ResponseWriter, r *http.Request) {
@@ -58,15 +60,23 @@ func (h *Handler) CreateTask(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	var execMode belgrade.ExecutionMode
+	if h.trustedUsers.Contains(claims.UserID) {
+		execMode = belgrade.ExecutionMode_TRUSTED
+	} else {
+		execMode = belgrade.ExecutionMode_UNTRUSTED
+	}
+
 	taskID := uuid.NewString()
 	traceID := uuid.NewString()
 
 	task := &belgrade.Task{
-		TaskId:      taskID,
-		UserId:      claims.UserID,
-		Prompt:      req.Prompt,
-		CreatedAtMs: time.Now().UnixMilli(),
-		TraceId:     traceID,
+		TaskId:        taskID,
+		UserId:        claims.UserID,
+		Prompt:        req.Prompt,
+		CreatedAtMs:   time.Now().UnixMilli(),
+		TraceId:       traceID,
+		ExecutionMode: execMode,
 	}
 
 	// Subscribe before publish so no ThoughtEvents are missed on the streaming path.
