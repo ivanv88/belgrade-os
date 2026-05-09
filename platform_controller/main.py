@@ -4,6 +4,7 @@ import os
 import signal
 import subprocess
 import logging
+import time
 from datetime import datetime
 from pathlib import Path
 from typing import Dict, List, Optional
@@ -14,6 +15,7 @@ from sqlalchemy import text, Column, String, JSON, DateTime
 from sqlalchemy.orm import declarative_base
 
 from scheduler import SchedulerManager, ScheduleEntry, PermissionSyncManager
+from ephemeral_runner import EphemeralRunner, OutputValidationError
 
 import re
 import secrets
@@ -27,6 +29,10 @@ logger = logging.getLogger(__name__)
 DB_URL = os.getenv("DATABASE_URL", "postgresql+asyncpg://postgres:postgres@localhost:5432/postgres")
 REDIS_URL = os.getenv("CONTROLLER_REDIS_URL") or os.getenv("BEG_OS_REDIS_URL", "redis://localhost:6379")
 CONTROLLER_TOKEN = os.getenv("CONTROLLER_API_TOKEN", "")
+SECCOMP_PROFILE = os.getenv("SECCOMP_PROFILE", "/config/seccomp-untrusted.json")
+APPS_ROOT = Path(os.getenv("APPS_ROOT", str(Path(__file__).parent.parent / "apps")))
+
+_ephemeral_runner = EphemeralRunner(seccomp_profile=SECCOMP_PROFILE, apps_root=APPS_ROOT)
 _bearer = HTTPBearer(auto_error=False)
 _APP_ID_RE = re.compile(r"^[a-zA-Z0-9_-]{1,64}$")
 
@@ -138,6 +144,99 @@ class AppSupervisor:
             await self.running_apps[app_id].stop()
             del self.running_apps[app_id]
 
+async def process_untrusted_call(
+    call_bytes: bytes,
+    runner: EphemeralRunner,
+    rdb,
+) -> None:
+    from gen import belgrade_os_pb2
+    call = belgrade_os_pb2.ToolCall()
+    call.ParseFromString(call_bytes)
+
+    start_ms = int(time.time() * 1000)
+    result = belgrade_os_pb2.ToolResult()
+    result.call_id = call.call_id
+    result.task_id = call.task_id
+    result.user_id = call.user_id
+    result.tenant_id = call.tenant_id
+
+    try:
+        output = await runner.run(
+            task_id=call.task_id,
+            app_id=call.tool_name.split(":")[0] if ":" in call.tool_name else call.tool_name,
+            input_data={"tool_name": call.tool_name, "input_json": call.input_json},
+        )
+        result.success = True
+        result.output_json = json.dumps(output)
+    except asyncio.TimeoutError:
+        result.success = False
+        result.error = "execution timeout after 30s"
+        logger.error("ephemeral timeout task_id=%s call_id=%s tool=%s",
+                     call.task_id, call.call_id, call.tool_name)
+    except (OutputValidationError, RuntimeError) as exc:
+        result.success = False
+        result.error = str(exc)
+        logger.error("ephemeral error task_id=%s call_id=%s: %s",
+                     call.task_id, call.call_id, exc)
+
+    result.duration_ms = int(time.time() * 1000) - start_ms
+    await rdb.xadd(
+        "tasks:tool_results",
+        {b"data": result.SerializeToString(), b"task_id": call.task_id.encode()},
+    )
+    logger.info(
+        "untrusted call done task_id=%s call_id=%s tool=%s success=%s duration_ms=%d",
+        call.task_id, call.call_id, call.tool_name, result.success, result.duration_ms,
+    )
+
+
+async def _untrusted_consumer_loop(redis_url: str) -> None:
+    import redis.asyncio as aioredis
+    import redis.exceptions
+
+    STREAM = "tasks:untrusted_calls"
+    GROUP = "untrusted-runners"
+    CONSUMER = "platform-controller"
+
+    rdb = aioredis.from_url(redis_url, decode_responses=False)
+    try:
+        await rdb.xgroup_create(STREAM, GROUP, id="0", mkstream=True)
+    except Exception:
+        pass  # BUSYGROUP on restart
+
+    logger.info("untrusted consumer started stream=%s group=%s", STREAM, GROUP)
+    while True:
+        try:
+            results = await rdb.xreadgroup(
+                groupname=GROUP,
+                consumername=CONSUMER,
+                streams={STREAM: ">"},
+                count=1,
+                block=2000,
+            )
+            if not results:
+                continue
+            _stream, messages = results[0]
+            for msg_id, fields in messages:
+                call_bytes = fields.get(b"data")
+                if call_bytes is None:
+                    await rdb.xack(STREAM, GROUP, msg_id)
+                    continue
+                try:
+                    await process_untrusted_call(call_bytes, _ephemeral_runner, rdb)
+                except Exception:
+                    logger.exception("unhandled error in untrusted consumer msg=%s", msg_id)
+                finally:
+                    await rdb.xack(STREAM, GROUP, msg_id)
+        except Exception as exc:
+            if "ConnectionError" in type(exc).__name__:
+                logger.error("untrusted consumer lost Redis connection, retrying in 5s")
+                await asyncio.sleep(5)
+            else:
+                logger.exception("untrusted consumer unexpected error")
+                await asyncio.sleep(1)
+
+
 # --- FastAPI App ---
 app = FastAPI(title="Belgrade Platform Controller")
 bridge_url = os.getenv("BEG_OS_BRIDGE_URL", "http://localhost:8081")
@@ -194,6 +293,9 @@ async def startup_event():
                 params=row[5]
             )
             await scheduler_manager.add_schedule(entry)
+
+    # 4. Start untrusted calls consumer
+    asyncio.create_task(_untrusted_consumer_loop(REDIS_URL))
 
 @app.post("/apps/reload")
 async def reload_app(action: AppAction, _: None = Depends(_require_token)):
