@@ -20,6 +20,7 @@ inference/gen/**/*_pb2.py
 # Go
 gateway/bin/
 gateway/*.test
+gateway/gateway
 
 # Rust
 bridge/target/

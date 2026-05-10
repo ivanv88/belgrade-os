@@ -1,7 +1,7 @@
 import asyncio
 import json
 from pathlib import Path
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from ephemeral_runner import EphemeralRunner, OutputValidationError
@@ -49,19 +49,35 @@ async def test_run_success(tmp_path):
 @pytest.mark.asyncio
 async def test_run_timeout(tmp_path):
     runner = make_runner(tmp_path)
+    subprocess_calls: list[tuple] = []
 
-    async def slow_proc(*args, **kwargs):
-        proc = AsyncMock()
-        async def hang():
-            await asyncio.sleep(9999)
-            return b"", b""
-        proc.communicate = hang
-        return proc
+    async def dispatch(*args, **kwargs):
+        subprocess_calls.append(args)
+        if args[1] == "run":
+            # Simulate a hanging docker run process.
+            # kill() must be a regular (sync) function — asyncio.subprocess.Process.kill is sync.
+            proc = MagicMock()
+            proc.kill = MagicMock()
+            proc.wait = AsyncMock(return_value=None)
+            async def hang():
+                await asyncio.sleep(9999)
+                return b"", b""
+            proc.communicate = hang
+            return proc
+        else:
+            # docker rm -f call — return immediately
+            rm = MagicMock()
+            rm.wait = AsyncMock(return_value=None)
+            return rm
 
-    with patch("asyncio.create_subprocess_exec", side_effect=slow_proc):
+    with patch("asyncio.create_subprocess_exec", side_effect=dispatch):
         with patch("ephemeral_runner._TIMEOUT_S", 0.01):
             with pytest.raises(asyncio.TimeoutError):
                 await runner.run("task-timeout", "myapp", {})
+
+    rm_calls = [c for c in subprocess_calls if len(c) >= 3 and c[1] == "rm"]
+    assert len(rm_calls) == 1, f"expected one docker rm call, got: {subprocess_calls}"
+    assert "beg-task-timeout" in rm_calls[0], f"expected container name in rm args: {rm_calls[0]}"
 
 
 @pytest.mark.asyncio
