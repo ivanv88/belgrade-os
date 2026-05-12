@@ -23,6 +23,8 @@ mod tests {
             created_at_ms: 1_700_000_000_000,
             trace_id: "trace-abc".to_string(),
             execution_mode: ExecutionMode::Trusted as i32,
+            app_id: String::new(),
+            tenant_id: String::new(),
         };
         assert_eq!(task.task_id, "task-001");
         assert_eq!(task.trace_id, "trace-abc");

@@ -62,6 +62,12 @@ pub struct NotificationsProviderResponse {
     pub topic: String,
 }
 
+#[derive(Serialize)]
+pub struct AppInfoResponse {
+    pub app_id: String,
+    pub callback_url: String,
+}
+
 #[derive(Deserialize, Serialize, Clone)]
 pub struct EventPayload {
     pub topic: String,
@@ -82,6 +88,28 @@ async fn handle_register(
                 format!("tool name {:?} must be namespaced as '{}:<name>'", t.name, req.app_id),
             ));
         }
+    }
+    // Validate callback URL — only http:// and https:// with a non-empty host are permitted.
+    // The url crate non-conformantly parses "http:///path" as host="path" (it treats the first
+    // path segment as the authority), so we additionally check the raw string: after stripping
+    // scheme + "://", the authority must not begin with "/" (which would indicate an empty host).
+    let parsed_url = url::Url::parse(&req.callback_url).map_err(|_| (
+        StatusCode::BAD_REQUEST,
+        format!("callback_url {:?} is not a valid URL", req.callback_url),
+    ))?;
+    let scheme = parsed_url.scheme();
+    let raw_authority_empty = req.callback_url
+        .strip_prefix(&format!("{}://", scheme))
+        .map(|rest| rest.starts_with('/') || rest.is_empty())
+        .unwrap_or(true);
+    if !matches!(scheme, "http" | "https") || parsed_url.host().is_none() || raw_authority_empty {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            format!(
+                "callback_url {:?} must use http:// or https:// with a non-empty host",
+                req.callback_url
+            ),
+        ));
     }
     let registrations: Vec<ToolRegistration> = req
         .tools
@@ -243,6 +271,16 @@ async fn handle_notifications_provider(
     })
 }
 
+async fn handle_app_info(
+    State(state): State<AppState>,
+    axum::extract::Path(app_id): axum::extract::Path<String>,
+) -> Result<Json<AppInfoResponse>, StatusCode> {
+    match state.registry.get_callback(&app_id) {
+        Some(callback_url) => Ok(Json(AppInfoResponse { app_id, callback_url })),
+        None => Err(StatusCode::NOT_FOUND),
+    }
+}
+
 pub fn create_router(
     registry: Arc<ToolRegistry>,
     config: Arc<Config>,
@@ -255,6 +293,7 @@ pub fn create_router(
         .route("/v1/execute", post(handle_execute))
         .route("/v1/events/publish", post(handle_publish))
         .route("/v1/notifications/provider", get(handle_notifications_provider))
+        .route("/v1/apps/:app_id", get(handle_app_info))
         .with_state(state)
 }
 
@@ -624,6 +663,113 @@ mod tests {
         
         // Wait for tokio::spawn fan-out
         tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+    }
+
+    #[tokio::test]
+    async fn test_get_app_info_returns_callback_url() {
+        let registry = Arc::new(ToolRegistry::new());
+        registry.register("shopping", "http://app:9000", &[]);
+        let app = make_router(Arc::clone(&registry));
+
+        let resp = app
+            .oneshot(Request::builder().uri("/v1/apps/shopping").body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+
+        assert_eq!(resp.status(), StatusCode::OK);
+        let body = resp.into_body().collect().await.unwrap().to_bytes();
+        let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(json["app_id"], "shopping");
+        assert_eq!(json["callback_url"], "http://app:9000");
+    }
+
+    #[tokio::test]
+    async fn test_get_app_info_returns_404_for_unknown_app() {
+        let registry = Arc::new(ToolRegistry::new());
+        let app = make_router(Arc::clone(&registry));
+
+        let resp = app
+            .oneshot(Request::builder().uri("/v1/apps/unknown").body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+
+        assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+    }
+
+    #[tokio::test]
+    async fn test_register_rejects_non_http_callback_url() {
+        let registry = Arc::new(ToolRegistry::new());
+        let app = make_router(Arc::clone(&registry));
+
+        let body = serde_json::json!({
+            "app_id": "evil",
+            "callback_url": "file:///etc/passwd",
+            "tools": []
+        });
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/v1/register")
+                    .header("content-type", "application/json")
+                    .body(Body::from(body.to_string()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+    }
+
+    #[tokio::test]
+    async fn test_register_accepts_https_callback_url() {
+        let registry = Arc::new(ToolRegistry::new());
+        let app = make_router(Arc::clone(&registry));
+
+        let body = serde_json::json!({
+            "app_id": "myapp",
+            "callback_url": "https://app.internal:9000",
+            "tools": []
+        });
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/v1/register")
+                    .header("content-type", "application/json")
+                    .body(Body::from(body.to_string()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(resp.status(), StatusCode::NO_CONTENT);
+    }
+
+    #[tokio::test]
+    async fn test_register_rejects_empty_host_url() {
+        // Prefix matching alone accepts "http:///path" (empty host). URL parsing must reject it.
+        let registry = Arc::new(ToolRegistry::new());
+        let app = make_router(Arc::clone(&registry));
+
+        let body = serde_json::json!({
+            "app_id": "evil",
+            "callback_url": "http:///path",
+            "tools": []
+        });
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/v1/register")
+                    .header("content-type", "application/json")
+                    .body(Body::from(body.to_string()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
     }
 
     #[tokio::test]

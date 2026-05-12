@@ -16,6 +16,7 @@ redis = { version = "0.25", features = ["tokio-comp"] }
 deadpool-redis = { version = "0.15", features = ["rt_tokio_1"] }
 async-trait = "0.1"
 thiserror = "1"
+url = "2"
 
 [build-dependencies]
 prost-build = "0.12"

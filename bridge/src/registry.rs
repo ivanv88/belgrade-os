@@ -107,6 +107,10 @@ impl ToolRegistry {
         tools
     }
 
+    pub fn get_callback(&self, app_id: &str) -> Option<String> {
+        self.app_callbacks.read().expect("lock poisoned").get(app_id).cloned()
+    }
+
     pub fn hydrate(&self, state: crate::store::HydratedState) {
         {
             let mut tools = self.tools.write().expect("lock poisoned");
@@ -270,5 +274,18 @@ mod tests {
         let tools = reg.list();
         let names: Vec<&str> = tools.iter().map(|t| t.name.as_str()).collect();
         assert_eq!(names, vec!["app1:a", "app1:z"]);
+    }
+
+    #[test]
+    fn test_get_callback_returns_url_for_known_app() {
+        let reg = ToolRegistry::new();
+        reg.register("shopping", "http://app:9000", &[]);
+        assert_eq!(reg.get_callback("shopping"), Some("http://app:9000".to_string()));
+    }
+
+    #[test]
+    fn test_get_callback_returns_none_for_unknown_app() {
+        let reg = ToolRegistry::new();
+        assert_eq!(reg.get_callback("unknown"), None);
     }
 }
