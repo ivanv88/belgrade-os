@@ -14,6 +14,8 @@ message Task {
   int64         created_at_ms  = 4;  // Unix epoch milliseconds
   string        trace_id       = 5;  // propagated across all 5 services for distributed tracing
   ExecutionMode execution_mode = 6;
+  string        app_id         = 7;  // originating app (empty for legacy /v1/tasks calls)
+  string        tenant_id      = 8;  // tenant context (empty for legacy /v1/tasks calls)
 }
 
 // MCP tool definition — namespaced by Capability Bridge (e.g. "shopping:add_item")
