@@ -1,6 +1,6 @@
 from __future__ import annotations
 import pytest
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, MagicMock
 from belgrade_sdk.context import AppContext
 from belgrade_sdk.gen import belgrade_os_pb2
 
@@ -88,3 +88,17 @@ async def test_inference_request_empty_tenant_when_none():
     task = belgrade_os_pb2.Task()
     task.ParseFromString(payload["data"])
     assert task.tenant_id == ""
+
+
+async def test_cancel_sets_redis_key_with_ttl():
+    mock_pool = AsyncMock()
+    mock_pool.set = AsyncMock()
+    ctx = _make_ctx(redis_pool=mock_pool)
+    await ctx.inference.cancel("task-abc")
+    mock_pool.set.assert_awaited_once_with("tasks:cancel:task-abc", "1", ex=3600)
+
+
+async def test_cancel_raises_without_redis():
+    ctx = _make_ctx(redis_pool=None)
+    with pytest.raises(RuntimeError, match="Redis pool not initialized"):
+        await ctx.inference.cancel("task-abc")

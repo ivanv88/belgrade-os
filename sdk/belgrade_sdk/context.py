@@ -94,6 +94,11 @@ class InferenceAdapter:
 
         return {"task_id": task_id, "trace_id": trace_id}
 
+    async def cancel(self, task_id: str) -> None:
+        if not self.ctx._redis_pool:
+            raise RuntimeError("Redis pool not initialized in AppContext")
+        await self.ctx._redis_pool.set(f"tasks:cancel:{task_id}", "1", ex=3600)
+
 
 class AppContext:
     def __init__(
