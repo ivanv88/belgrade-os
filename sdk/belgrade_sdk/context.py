@@ -1,5 +1,7 @@
 from __future__ import annotations
 import logging
+import time
+import uuid as _uuid
 from typing import Any, Optional, Union
 import httpx
 from sqlalchemy.ext.asyncio import AsyncSession, AsyncEngine, async_sessionmaker
@@ -56,6 +58,43 @@ class VaultAdapter:
             logger.error("Failed to publish vault operation: %s", e)
 
 
+class InferenceAdapter:
+    def __init__(self, ctx: "AppContext"):
+        self.ctx = ctx
+
+    async def request(self, prompt: str) -> dict:
+        from .gen import belgrade_os_pb2
+
+        if not self.ctx._redis_pool:
+            raise RuntimeError("Redis pool not initialized in AppContext")
+
+        task_id = str(_uuid.uuid4())
+        trace_id = self.ctx.trace_id or str(_uuid.uuid4())
+
+        task = belgrade_os_pb2.Task()
+        task.task_id = task_id
+        task.user_id = self.ctx.user_id or ""
+        task.prompt = prompt
+        task.created_at_ms = int(time.time() * 1000)
+        task.trace_id = trace_id
+        task.execution_mode = belgrade_os_pb2.ExecutionMode.Value("UNTRUSTED")
+        task.app_id = self.ctx.app_id
+        task.tenant_id = self.ctx.tenant_id or ""
+
+        try:
+            await self.ctx._redis_pool.xadd(
+                defaults.STREAM_TASKS_INBOUND,
+                {"data": task.SerializeToString()},
+                maxlen=1000,
+                approximate=True,
+            )
+        except Exception as e:
+            logger.error("Failed to publish inference task: %s", e)
+            raise
+
+        return {"task_id": task_id, "trace_id": trace_id}
+
+
 class AppContext:
     def __init__(
         self,
@@ -81,6 +120,10 @@ class AppContext:
     @property
     def vault(self) -> VaultAdapter:
         return VaultAdapter(self)
+
+    @property
+    def inference(self) -> "InferenceAdapter":
+        return InferenceAdapter(self)
 
     @property
     async def db(self) -> AsyncSession:
