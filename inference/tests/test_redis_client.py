@@ -190,3 +190,29 @@ async def test_ensure_consumer_groups_ignores_busygroup():
 
     # Should not raise
     await client.ensure_consumer_groups()
+
+
+# ---------------------------------------------------------------------------
+# get / delete
+# ---------------------------------------------------------------------------
+
+async def test_get_returns_decoded_string():
+    client, mock_redis = _make_client()
+    mock_redis.get = AsyncMock(return_value=b"1")
+    result = await client.get("tasks:cancel:t1")
+    assert result == "1"
+    mock_redis.get.assert_awaited_once_with("tasks:cancel:t1")
+
+
+async def test_get_returns_none_when_key_missing():
+    client, mock_redis = _make_client()
+    mock_redis.get = AsyncMock(return_value=None)
+    result = await client.get("tasks:cancel:t1")
+    assert result is None
+
+
+async def test_delete_calls_redis_delete():
+    client, mock_redis = _make_client()
+    mock_redis.delete = AsyncMock()
+    await client.delete("tasks:cancel:t1")
+    mock_redis.delete.assert_awaited_once_with("tasks:cancel:t1")

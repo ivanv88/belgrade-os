@@ -106,5 +106,16 @@ class RedisClient:
                 if "BUSYGROUP" not in str(exc):
                     raise
 
+    async def get(self, key: str) -> Optional[str]:
+        """GET key, returns decoded string or None."""
+        value = await self._redis.get(key)
+        if value is None:
+            return None
+        return value.decode() if isinstance(value, bytes) else value
+
+    async def delete(self, key: str) -> None:
+        """DEL key."""
+        await self._redis.delete(key)
+
     async def close(self) -> None:
         await self._redis.aclose()
