@@ -1,4 +1,5 @@
 from __future__ import annotations
+import asyncio
 import json
 import os
 import pytest
@@ -94,3 +95,91 @@ def test_load_manifest_returns_empty_dict_on_invalid_json(tmp_path):
     app = AppProcess(app_id="shopping", path=tmp_path, port=9001)
     result = app._load_manifest()
     assert result == {}
+
+
+def test_watchdog_restarts_dead_app(tmp_path):
+    """If an app process exits, the watchdog must restart it within one tick."""
+    from main import AppSupervisor
+    sup = AppSupervisor(apps_root=tmp_path)
+
+    app_dir = tmp_path / "myapp"
+    app_dir.mkdir()
+    (app_dir / "main.py").write_text("# stub")
+
+    live_proc = MagicMock()
+    live_proc.pid = 9999
+    live_proc.poll.return_value = None
+
+    dead_proc = MagicMock()
+    dead_proc.pid = 9998
+    dead_proc.poll.return_value = 1
+    dead_proc.returncode = 1
+
+    start_call_count = 0
+
+    async def run():
+        nonlocal start_call_count
+        original_start = sup.start_app
+
+        async def mock_start(app_id):
+            nonlocal start_call_count
+            start_call_count += 1
+            proc = live_proc if start_call_count == 1 else MagicMock(pid=9997, poll=MagicMock(return_value=None))
+            with patch("main.subprocess.Popen", return_value=proc), \
+                 patch("main.open", MagicMock()):
+                await original_start(app_id)
+            if start_call_count == 1:
+                sup.running_apps["myapp"].process = dead_proc
+
+        sup.start_app = mock_start
+
+        with patch("main.subprocess.Popen", return_value=live_proc), \
+             patch("main.open", MagicMock()):
+            await sup.discover_and_start()
+
+        assert start_call_count == 1
+
+        await sup._watch_tick()
+
+        assert start_call_count == 2, "watchdog must restart dead app"
+
+    asyncio.run(run())
+
+
+def test_watchdog_does_not_restart_live_app(tmp_path):
+    """Running apps must not be restarted by the watchdog."""
+    from main import AppSupervisor
+    sup = AppSupervisor(apps_root=tmp_path)
+
+    app_dir = tmp_path / "myapp"
+    app_dir.mkdir()
+    (app_dir / "main.py").write_text("# stub")
+
+    live_proc = MagicMock()
+    live_proc.pid = 9999
+    live_proc.poll.return_value = None
+
+    start_call_count = 0
+
+    async def run():
+        nonlocal start_call_count
+        original_start = sup.start_app
+
+        async def mock_start(app_id):
+            nonlocal start_call_count
+            start_call_count += 1
+            with patch("main.subprocess.Popen", return_value=live_proc), \
+                 patch("main.open", MagicMock()):
+                await original_start(app_id)
+
+        sup.start_app = mock_start
+
+        with patch("main.subprocess.Popen", return_value=live_proc), \
+             patch("main.open", MagicMock()):
+            await sup.discover_and_start()
+
+        await sup._watch_tick()
+
+        assert start_call_count == 1, "live app must not be restarted"
+
+    asyncio.run(run())

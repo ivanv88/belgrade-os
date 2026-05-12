@@ -144,6 +144,24 @@ class AppSupervisor:
             await self.running_apps[app_id].stop()
             del self.running_apps[app_id]
 
+    async def _watch_tick(self) -> None:
+        """Check all running apps; restart any that have exited."""
+        dead = [
+            app_id
+            for app_id, proc in self.running_apps.items()
+            if proc.process is not None and proc.process.poll() is not None
+        ]
+        for app_id in dead:
+            logger.warning("app %s exited (rc=%s) — restarting", app_id,
+                           self.running_apps[app_id].process.returncode)
+            await self.start_app(app_id)
+
+    async def watch(self, interval: int = 10) -> None:
+        """Background loop: call _watch_tick every `interval` seconds."""
+        while True:
+            await asyncio.sleep(interval)
+            await self._watch_tick()
+
 async def process_untrusted_call(
     call_bytes: bytes,
     runner: EphemeralRunner,
@@ -308,6 +326,7 @@ async def startup_event():
 
     # 4. Start untrusted calls consumer
     asyncio.create_task(_untrusted_consumer_loop(REDIS_URL))
+    asyncio.create_task(app_supervisor.watch())
 
 @app.post("/apps/reload")
 async def reload_app(action: AppAction, _: None = Depends(_require_token)):
