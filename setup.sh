@@ -71,9 +71,14 @@ DB_USER=laurent
 DB_PASSWORD=$(openssl rand -hex 32)
 REDIS_PASSWORD=$(openssl rand -hex 32)
 CONTROLLER_API_TOKEN=$(openssl rand -hex 32)
+
+# Service discovery — override when services run in containers (use container names)
+BEG_OS_BRIDGE_URL=http://localhost:8081
+BRIDGE_URL=http://localhost:8081
+BEG_OS_DB_URL=postgresql+asyncpg://laurent:\${DB_PASSWORD}@localhost:5432/belgrade_os
 EOF
     chmod 600 .env
-    echo "✅ .env created. Fill in CF_TUNNEL_TOKEN and then run: docker compose up -d"
+    echo "✅ .env created. Fill in CF_TUNNEL_TOKEN then run: make start"
 }
 
 # --- Redis ACL Generation ---
