@@ -10,6 +10,7 @@ type Config struct {
 	AppsRoot       string
 	GatewayURL     string
 	TrustedUserIDs string
+	BridgeURL      string
 }
 
 func LoadConfig() Config {
@@ -21,6 +22,7 @@ func LoadConfig() Config {
 		AppsRoot:       getEnv("APPS_ROOT", "../apps"),
 		GatewayURL:     getEnv("GATEWAY_URL", "http://localhost:8080"),
 		TrustedUserIDs: getEnv("TRUSTED_USER_IDS", ""),
+		BridgeURL:      getEnv("BRIDGE_URL", "http://localhost:8081"),
 	}
 }
 

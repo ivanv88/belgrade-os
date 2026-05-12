@@ -11,6 +11,7 @@ import (
 	"syscall"
 	"time"
 
+	"belgrade-os/gateway/appproxy"
 	"belgrade-os/gateway/auth"
 	"belgrade-os/gateway/redis"
 	"belgrade-os/gateway/ui"
@@ -44,6 +45,14 @@ func main() {
 	// UI Module Routes
 	uiMiddleware := ui.AuthMiddleware(cache, cfg.CFAudience)
 	mux.Handle("GET /ui/", uiMiddleware(http.HandlerFunc(uiH.ServeAsset)))
+
+	// Direct app action routes — auth-gated, RBAC-enforced, no inference stream.
+	proxyH := appproxy.NewHandler(cfg.BridgeURL, rClient)
+	mux.Handle("GET /api/", uiMiddleware(http.HandlerFunc(proxyH.ServeAPI)))
+	mux.Handle("POST /api/", uiMiddleware(http.HandlerFunc(proxyH.ServeAPI)))
+	mux.Handle("PUT /api/", uiMiddleware(http.HandlerFunc(proxyH.ServeAPI)))
+	mux.Handle("DELETE /api/", uiMiddleware(http.HandlerFunc(proxyH.ServeAPI)))
+	mux.Handle("PATCH /api/", uiMiddleware(http.HandlerFunc(proxyH.ServeAPI)))
 
 	addr := fmt.Sprintf(":%s", cfg.Port)
 	srv := &http.Server{

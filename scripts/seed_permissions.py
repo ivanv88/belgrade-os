@@ -13,8 +13,11 @@ async def seed():
         apps = [
             ('shopping', 'web', 'admin'),
             ('shopping', 'mobile', 'admin'),
+            ('shopping', 'api', 'admin'),
             ('demo_app', 'web', 'admin'),
+            ('demo_app', 'api', 'admin'),
             ('dashboard', 'web', 'admin'),
+            ('dashboard', 'api', 'admin'),
         ]
         
         for user in users:

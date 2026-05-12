@@ -56,3 +56,19 @@ func TestRedisURLFallbackToGeneric(t *testing.T) {
 		t.Fatalf("should fall back to REDIS_URL, got %s", cfg.RedisURL)
 	}
 }
+
+func TestBridgeURLFromEnv(t *testing.T) {
+	t.Setenv("BRIDGE_URL", "http://bridge:8081")
+	cfg := LoadConfig()
+	if cfg.BridgeURL != "http://bridge:8081" {
+		t.Fatalf("expected BridgeURL=http://bridge:8081, got %q", cfg.BridgeURL)
+	}
+}
+
+func TestBridgeURLDefault(t *testing.T) {
+	t.Setenv("BRIDGE_URL", "")
+	cfg := LoadConfig()
+	if cfg.BridgeURL != "http://localhost:8081" {
+		t.Fatalf("expected default BridgeURL=http://localhost:8081, got %q", cfg.BridgeURL)
+	}
+}
