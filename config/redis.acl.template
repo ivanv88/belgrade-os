@@ -7,5 +7,5 @@ user runner on >RUNNER_REDIS_PASSWORD ~tasks:tool_calls ~tasks:tool_results ~lea
 user notification on >NOTIFICATION_REDIS_PASSWORD ~tasks:notifications +ping +xreadgroup +xack +xgroup
 user vault on >VAULT_REDIS_PASSWORD ~tasks:vault_ops ~vault:lock:* +ping +xreadgroup +xack +xgroup +set +del
 user bridge on >BRIDGE_REDIS_PASSWORD ~bridge:* +ping +get +set +hget +hset +hmget +hdel +del +sadd +srem +smembers +hgetall +keys
-user app on >APP_REDIS_PASSWORD ~tasks:vault_ops ~tasks:notifications +ping +xadd
+user app on >APP_REDIS_PASSWORD ~tasks:inbound ~tasks:vault_ops ~tasks:notifications +ping +xadd
 user controller on >CONTROLLER_REDIS_PASSWORD ~perms:* ~tasks:tool_results ~tasks:untrusted_calls +ping +hset +hget +hmget +del +xadd +xreadgroup +xack +xgroup

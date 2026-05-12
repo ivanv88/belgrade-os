@@ -109,7 +109,7 @@ user notification on >${NOTIFICATION_PASS} ~tasks:notifications +ping +xreadgrou
 user vault on >${VAULT_PASS} ~tasks:vault_ops ~vault:lock:* +ping +xreadgroup +xack +xgroup +set +del
 user bridge on >${BRIDGE_PASS} ~bridge:* +ping +get +set +hget +hset +hmget +hdel +del +sadd +srem +smembers +hgetall +keys
 user controller on >${CONTROLLER_PASS} ~perms:* ~tasks:tool_results ~tasks:untrusted_calls +ping +hset +hget +hmget +del +xadd +xreadgroup +xack +xgroup
-user app on >${APP_PASS} ~tasks:vault_ops ~tasks:notifications +ping +xadd
+user app on >${APP_PASS} ~tasks:inbound ~tasks:vault_ops ~tasks:notifications +ping +xadd
 EOF
     # 0640: owner read/write, group read-only, world no access.
     # Redis runs as GID 999; chgrp lets it read the file without world-readable exposure.
