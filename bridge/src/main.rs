@@ -25,7 +25,7 @@ async fn main() {
         .create_pool(Some(deadpool_redis::Runtime::Tokio1))
         .expect("failed to create Redis connection pool");
 
-    let redis_store = Arc::new(RedisStore::new(pool));
+    let redis_store = Arc::new(RedisStore::new(pool.clone()));
 
     // Hydrate in-memory registry from Redis before accepting traffic.
     // Fail fast if Redis is unreachable — a cold bridge would appear healthy
@@ -43,7 +43,7 @@ async fn main() {
 
     let store: Arc<dyn Store> = redis_store;
     let addr = format!("0.0.0.0:{}", cfg.port);
-    let app = router::create_router(Arc::clone(&registry), Arc::clone(&cfg), store);
+    let app = router::create_router(Arc::clone(&registry), Arc::clone(&cfg), store, Some(pool));
 
     tracing::info!(port = cfg.port, "capability bridge listening");
     let listener = tokio::net::TcpListener::bind(&addr)

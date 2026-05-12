@@ -1,4 +1,4 @@
-use axum::{extract::State, http::StatusCode, response::Json, routing::{get, post}, Router};
+use axum::{extract::State, http::StatusCode, response::{IntoResponse, Json}, routing::{get, post}, Router};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use crate::{config::Config, registry::{ToolRegistration, ToolRegistry}};
@@ -10,6 +10,7 @@ pub struct AppState {
     pub config: Arc<Config>,
     pub http: reqwest::Client,
     pub store: Arc<dyn Store>,
+    pub pool: Option<deadpool_redis::Pool>,
 }
 
 #[derive(Deserialize)]
@@ -77,10 +78,21 @@ pub struct EventPayload {
     pub trace_id: String,
 }
 
+fn generate_token() -> String {
+    let a = uuid::Uuid::new_v4().simple().to_string();
+    let b = uuid::Uuid::new_v4().simple().to_string();
+    format!("{a}{b}")
+}
+
+#[derive(Serialize)]
+pub struct RegisterResponse {
+    pub app_token: String,
+}
+
 async fn handle_register(
     State(state): State<AppState>,
     Json(req): Json<RegisterRequest>,
-) -> Result<StatusCode, (StatusCode, String)> {
+) -> Result<axum::response::Response, (StatusCode, String)> {
     for t in &req.tools {
         if !t.name.starts_with(&format!("{}:", req.app_id)) {
             return Err((
@@ -149,7 +161,21 @@ async fn handle_register(
         state.registry.subscribe(&req.app_id, subs);
     }
 
-    Ok(StatusCode::NO_CONTENT)
+    if let Some(ref pool) = state.pool {
+        let token = generate_token();
+        let mut conn = pool.get().await.map_err(|e| (
+            StatusCode::INTERNAL_SERVER_ERROR, e.to_string(),
+        ))?;
+        redis::cmd("SET")
+            .arg(format!("bridge:token:{token}"))
+            .arg(&req.app_id)
+            .query_async::<_, ()>(&mut *conn)
+            .await
+            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+        return Ok(axum::Json(RegisterResponse { app_token: token }).into_response());
+    }
+
+    Ok(StatusCode::NO_CONTENT.into_response())
 }
 
 async fn handle_publish(
@@ -288,8 +314,9 @@ pub fn create_router(
     registry: Arc<ToolRegistry>,
     config: Arc<Config>,
     store: Arc<dyn Store>,
+    pool: Option<deadpool_redis::Pool>,
 ) -> Router {
-    let state = AppState { registry, config, http: reqwest::Client::new(), store };
+    let state = AppState { registry, config, http: reqwest::Client::new(), store, pool };
     Router::new()
         .route("/v1/register", post(handle_register))
         .route("/v1/tools", get(handle_tools))
@@ -317,7 +344,7 @@ mod tests {
     }
 
     fn make_router(registry: Arc<ToolRegistry>) -> Router {
-        create_router(registry, make_config(), Arc::new(NoopStore))
+        create_router(registry, make_config(), Arc::new(NoopStore), None)
     }
 
     #[tokio::test]
@@ -773,6 +800,70 @@ mod tests {
             .unwrap();
 
         assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+    }
+
+    async fn try_pool() -> Option<deadpool_redis::Pool> {
+        let cfg = deadpool_redis::Config::from_url("redis://localhost:6379");
+        let pool = cfg.create_pool(Some(deadpool_redis::Runtime::Tokio1)).ok()?;
+        let mut conn = pool.get().await.ok()?;
+        redis::cmd("PING").query_async::<_, ()>(&mut *conn).await.ok()?;
+        Some(pool)
+    }
+
+    #[tokio::test]
+    async fn test_register_without_pool_returns_204() {
+        let registry = Arc::new(ToolRegistry::new());
+        let app = make_router(Arc::clone(&registry));
+
+        let body = serde_json::json!({
+            "app_id": "myapp",
+            "callback_url": "http://app:8000",
+            "tools": []
+        });
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/v1/register")
+                    .header("content-type", "application/json")
+                    .body(Body::from(body.to_string()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::NO_CONTENT);
+    }
+
+    #[tokio::test]
+    async fn test_register_with_pool_returns_token() {
+        let Some(pool) = try_pool().await else { return };
+        let store = Arc::new(crate::store::RedisStore::new_for_test(pool.clone()));
+        let registry = Arc::new(ToolRegistry::new());
+        let app = create_router(registry, make_config(), store, Some(pool));
+
+        let body = serde_json::json!({
+            "app_id": "myapp",
+            "callback_url": "http://app:8000",
+            "tools": []
+        });
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/v1/register")
+                    .header("content-type", "application/json")
+                    .body(Body::from(body.to_string()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(resp.status(), StatusCode::OK);
+        let bytes = resp.into_body().collect().await.unwrap().to_bytes();
+        let json: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        let token = json["app_token"].as_str().expect("app_token missing");
+        assert_eq!(token.len(), 64, "token must be 64 hex chars");
+        assert!(token.chars().all(|c| c.is_ascii_hexdigit()), "token must be hex");
     }
 
     #[tokio::test]
