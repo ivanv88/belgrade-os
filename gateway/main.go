@@ -35,6 +35,8 @@ func main() {
 	uiH := ui.NewHandler(cfg.AppsRoot, rClient, cfg.GatewayURL)
 
 	mux := http.NewServeMux()
+	// Legacy/internal: direct inference submission. Not the recommended client path.
+	// Apps use ctx.inference.request() via the SDK. Retained for dev tooling + Admin App.
 	mux.HandleFunc("POST /v1/tasks", h.CreateTask)
 
 	// UI Module Routes

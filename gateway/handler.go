@@ -35,6 +35,10 @@ func NewHandler(jwks *auth.JWKSCache, rClient *redis.RedisClient, audience strin
 	return &Handler{auth: jwks, redis: rClient, audience: audience, trustedUsers: trusted}
 }
 
+// CreateTask is a legacy/internal endpoint for direct inference submission.
+// It is NOT the recommended integration path. Apps should use
+// ctx.inference.request() from the Belgrade SDK instead.
+// Retained for backward compatibility, developer tooling, and future Admin App use.
 func (h *Handler) CreateTask(w http.ResponseWriter, r *http.Request) {
 	tokenStr := r.Header.Get("Cf-Access-Jwt-Assertion")
 	if tokenStr == "" {

@@ -35,7 +35,61 @@ For full technical detail see `docs/tech.spec.md`.
 
 ---
 
-## 3. Implementation Roadmap — Original Monolith Design
+## 3. Architecture Principles
+
+These rules govern how the system is designed. Violations indicate planning drift.
+
+### Gateway is an edge, not an inference API
+
+The Gateway (`gateway/`) authenticates requests, enforces RBAC, serves static UI assets, and
+routes direct app actions. It is **not** the product inference API. Inference is an internal
+platform capability, not a public endpoint.
+
+### Inference is internal — apps own their workflows
+
+The Inference Controller (`inference/`) is a background worker that reads from `tasks:inbound`.
+Apps decide when AI is needed. When an app needs inference it enqueues a `Task` proto directly
+to Redis via `ctx.inference.request(prompt)` from the Belgrade SDK — no HTTP call to Gateway.
+
+### App-owned inference is always UNTRUSTED
+
+Apps may not self-assert trusted execution. `ExecutionMode` on app-owned tasks is always stamped
+`UNTRUSTED` by the SDK. The Gateway is the only system component that stamps `TRUSTED`, derived
+from the `TRUSTED_USER_IDS` env var checked against the validated JWT identity. An internal
+platform trusted path for apps is a future concern.
+
+**Defense-in-depth:** Inference overrides `execution_mode` to `UNTRUSTED` for every task where
+`task.app_id != ""`. Redis ACLs cannot validate proto field values — an app with the `app` Redis
+credential could manually serialize `execution_mode=TRUSTED`. The override in Inference is the
+enforcement boundary, not the SDK default.
+
+### App actions are deterministic by default
+
+`POST /api/{app_id}/...` routes reach the app's own HTTP callback server directly (via Bridge
+lookup). They do **not** enqueue inference tasks. An app may internally call
+`ctx.inference.request()` if its domain logic requires AI, but this is the exception.
+
+### `/v1/tasks` is legacy/internal
+
+`POST /v1/tasks` on the Gateway remains functional for backward compatibility, developer tooling,
+and future Admin App use. It is **not** the recommended integration path for apps or clients.
+New code must use `ctx.inference.request()` from the SDK instead.
+
+### No direct HTTP from Gateway to Inference Controller
+
+Gateway never calls Inference over HTTP. All Gateway→Inference communication is indirect:
+Gateway (or SDK) XADDs to `tasks:inbound`; Inference consumes from that stream.
+
+### Bridge callback URLs are an internal trust boundary
+
+App callback URLs are registered at startup by apps running under Platform Controller supervision.
+The Bridge is not exposed through Cloudflare/Gateway — only internal services can register.
+Registered callback URLs must use `http://` or `https://` schemes; other schemes are rejected
+at registration time.
+
+---
+
+## 4. Implementation Roadmap — Original Monolith Design
 
 > **⚠️ SUPERSEDED** — This roadmap described the original FastAPI monolith architecture (`core/loader.py`, `AppContext`, `asyncio.Queue` EventBus). The system was redesigned as a distributed architecture in April 2026. See Section 5 for the current roadmap.
 
@@ -59,7 +113,7 @@ For full technical detail see `docs/tech.spec.md`.
 
 ---
 
-## 4. Security & Data Policy
+## 5. Security & Data Policy
 
 - **Access Control:** Restricted to specific emails via Cloudflare Zero Trust
 - **Persistence:** Live data in `/data/postgres` and `/mnt/storage` — git-ignored, never committed
@@ -68,7 +122,7 @@ For full technical detail see `docs/tech.spec.md`.
 
 ---
 
-## 5. Roadmap (Current Status)
+## 6. Roadmap (Current Status)
 
 ### ✅ Phase 1: Distributed Foundation (Completed Today)
 - [x] **6-Service Architecture**: Gateway, Bridge, Inference, Runner, Controller, Notification.
