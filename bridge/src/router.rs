@@ -3,6 +3,7 @@ use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use crate::{config::Config, registry::{ToolRegistration, ToolRegistry}};
 use crate::store::{NoopStore, Store};
+use prost::Message as _;
 
 #[derive(Clone)]
 pub struct AppState {
@@ -87,6 +88,89 @@ fn generate_token() -> String {
 #[derive(Serialize)]
 pub struct RegisterResponse {
     pub app_token: String,
+}
+
+#[derive(Deserialize)]
+pub struct NotifyRequest {
+    pub app_id: String,
+    pub user_id: String,
+    pub title: String,
+    pub body: String,
+    pub priority: Option<i32>,
+    pub tags: Option<Vec<String>>,
+    pub click_url: Option<String>,
+    pub trace_id: Option<String>,
+}
+
+fn extract_bearer(headers: &axum::http::HeaderMap) -> Result<&str, (StatusCode, String)> {
+    headers
+        .get(axum::http::header::AUTHORIZATION)
+        .and_then(|v| v.to_str().ok())
+        .and_then(|v| v.strip_prefix("Bearer "))
+        .ok_or((
+            StatusCode::UNAUTHORIZED,
+            "missing or malformed Authorization: Bearer <token> header".to_string(),
+        ))
+}
+
+async fn lookup_token(
+    pool: &deadpool_redis::Pool,
+    token: &str,
+) -> Result<String, (StatusCode, String)> {
+    let mut conn = pool.get().await.map_err(|e| {
+        (StatusCode::INTERNAL_SERVER_ERROR, format!("Redis pool error: {e}"))
+    })?;
+    let app_id: Option<String> = redis::cmd("GET")
+        .arg(format!("bridge:token:{token}"))
+        .query_async(&mut *conn)
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("Redis error: {e}")))?;
+    app_id.ok_or((StatusCode::UNAUTHORIZED, "invalid token".to_string()))
+}
+
+async fn handle_notify(
+    State(state): State<AppState>,
+    headers: axum::http::HeaderMap,
+    Json(req): Json<NotifyRequest>,
+) -> Result<StatusCode, (StatusCode, String)> {
+    let raw_token = extract_bearer(&headers)?;
+
+    let pool = state.pool.as_ref().ok_or((
+        StatusCode::SERVICE_UNAVAILABLE,
+        "Redis not configured".to_string(),
+    ))?;
+
+    let token_app_id = lookup_token(pool, raw_token).await?;
+    if token_app_id != req.app_id {
+        return Err((StatusCode::FORBIDDEN, "app_id does not match token".to_string()));
+    }
+
+    let notification = crate::belgrade_os::NotificationRequest {
+        trace_id: req.trace_id.unwrap_or_default(),
+        app_id: req.app_id.clone(),
+        user_id: req.user_id.clone(),
+        title: req.title.clone(),
+        body: req.body.clone(),
+        priority: req.priority.unwrap_or(0),
+        driver: String::new(),
+        tags: req.tags.unwrap_or_default(),
+        click_url: req.click_url.unwrap_or_default(),
+    };
+    let encoded = notification.encode_to_vec();
+
+    let mut conn = pool.get().await.map_err(|e| {
+        (StatusCode::INTERNAL_SERVER_ERROR, format!("Redis pool error: {e}"))
+    })?;
+    redis::cmd("XADD")
+        .arg("tasks:notifications")
+        .arg("*")
+        .arg("data")
+        .arg(encoded.as_slice())
+        .query_async::<_, ()>(&mut *conn)
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("Redis error: {e}")))?;
+
+    Ok(StatusCode::ACCEPTED)
 }
 
 async fn handle_register(
@@ -322,6 +406,7 @@ pub fn create_router(
         .route("/v1/tools", get(handle_tools))
         .route("/v1/execute", post(handle_execute))
         .route("/v1/events/publish", post(handle_publish))
+        .route("/v1/notify", post(handle_notify))
         .route("/v1/notifications/provider", get(handle_notifications_provider))
         .route("/v1/apps/:app_id", get(handle_app_info))
         .with_state(state)
@@ -864,6 +949,179 @@ mod tests {
         let token = json["app_token"].as_str().expect("app_token missing");
         assert_eq!(token.len(), 64, "token must be 64 hex chars");
         assert!(token.chars().all(|c| c.is_ascii_hexdigit()), "token must be hex");
+    }
+
+    #[tokio::test]
+    async fn test_notify_rejects_missing_auth() {
+        let registry = Arc::new(ToolRegistry::new());
+        let app = make_router(registry);
+
+        let body = serde_json::json!({
+            "app_id": "myapp", "user_id": "u1",
+            "title": "Hello", "body": "World"
+        });
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/v1/notify")
+                    .header("content-type", "application/json")
+                    .body(Body::from(body.to_string()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    #[tokio::test]
+    async fn test_notify_returns_503_without_pool() {
+        let registry = Arc::new(ToolRegistry::new());
+        let app = make_router(registry);
+
+        let body = serde_json::json!({
+            "app_id": "myapp", "user_id": "u1",
+            "title": "Hello", "body": "World"
+        });
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/v1/notify")
+                    .header("content-type", "application/json")
+                    .header("authorization", "Bearer sometoken")
+                    .body(Body::from(body.to_string()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::SERVICE_UNAVAILABLE);
+    }
+
+    #[tokio::test]
+    async fn test_notify_rejects_invalid_token() {
+        let Some(pool) = try_pool().await else { return };
+        let store = Arc::new(crate::store::RedisStore::new_for_test(pool.clone()));
+        let registry = Arc::new(ToolRegistry::new());
+        let app = create_router(registry, make_config(), store, Some(pool));
+
+        let body = serde_json::json!({
+            "app_id": "myapp", "user_id": "u1",
+            "title": "Test", "body": "Body"
+        });
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/v1/notify")
+                    .header("content-type", "application/json")
+                    .header("authorization", "Bearer not_a_real_token_hex")
+                    .body(Body::from(body.to_string()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    #[tokio::test]
+    async fn test_notify_rejects_wrong_app_id() {
+        let Some(pool) = try_pool().await else { return };
+        let store: Arc<dyn Store> = Arc::new(crate::store::RedisStore::new_for_test(pool.clone()));
+        let registry = Arc::new(ToolRegistry::new());
+
+        let reg_resp = create_router(
+            Arc::clone(&registry), make_config(), Arc::clone(&store), Some(pool.clone()),
+        )
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/v1/register")
+                .header("content-type", "application/json")
+                .body(Body::from(serde_json::json!({
+                    "app_id": "myapp",
+                    "callback_url": "http://app:8000",
+                    "tools": []
+                }).to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+        let reg_bytes = reg_resp.into_body().collect().await.unwrap().to_bytes();
+        let token = serde_json::from_slice::<serde_json::Value>(&reg_bytes).unwrap()["app_token"]
+            .as_str()
+            .unwrap()
+            .to_string();
+
+        let resp = create_router(
+            Arc::clone(&registry), make_config(), Arc::clone(&store), Some(pool),
+        )
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/v1/notify")
+                .header("content-type", "application/json")
+                .header("authorization", format!("Bearer {token}"))
+                .body(Body::from(serde_json::json!({
+                    "app_id": "otherapp",
+                    "user_id": "u1",
+                    "title": "Spoof", "body": "Attack"
+                }).to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+        assert_eq!(resp.status(), StatusCode::FORBIDDEN);
+    }
+
+    #[tokio::test]
+    async fn test_notify_succeeds_with_valid_token() {
+        let Some(pool) = try_pool().await else { return };
+        let store: Arc<dyn Store> = Arc::new(crate::store::RedisStore::new_for_test(pool.clone()));
+        let registry = Arc::new(ToolRegistry::new());
+
+        let reg_resp = create_router(
+            Arc::clone(&registry), make_config(), Arc::clone(&store), Some(pool.clone()),
+        )
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/v1/register")
+                .header("content-type", "application/json")
+                .body(Body::from(serde_json::json!({
+                    "app_id": "myapp",
+                    "callback_url": "http://app:8000",
+                    "tools": []
+                }).to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+        let reg_bytes = reg_resp.into_body().collect().await.unwrap().to_bytes();
+        let token = serde_json::from_slice::<serde_json::Value>(&reg_bytes).unwrap()["app_token"]
+            .as_str()
+            .unwrap()
+            .to_string();
+
+        let resp = create_router(
+            Arc::clone(&registry), make_config(), Arc::clone(&store), Some(pool),
+        )
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/v1/notify")
+                .header("content-type", "application/json")
+                .header("authorization", format!("Bearer {token}"))
+                .body(Body::from(serde_json::json!({
+                    "app_id": "myapp",
+                    "user_id": "u1",
+                    "title": "Hello", "body": "World"
+                }).to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+        assert_eq!(resp.status(), StatusCode::ACCEPTED);
     }
 
     #[tokio::test]
