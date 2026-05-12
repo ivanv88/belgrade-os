@@ -1405,4 +1405,56 @@ mod tests {
         let json: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
         assert!(json["task_id"].as_str().is_some_and(|s| !s.is_empty()));
     }
+
+    #[tokio::test]
+    async fn test_infer_rejects_wrong_app_id() {
+        let Some(pool) = try_pool().await else { return };
+        let store: Arc<dyn Store> = Arc::new(crate::store::RedisStore::new_for_test(pool.clone()));
+        let registry = Arc::new(ToolRegistry::new());
+
+        // Register "myapp" to obtain its token
+        let reg_resp = create_router(
+            Arc::clone(&registry), make_config(), Arc::clone(&store), Some(pool.clone()),
+        )
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/v1/register")
+                .header("content-type", "application/json")
+                .body(Body::from(serde_json::json!({
+                    "app_id": "myapp",
+                    "callback_url": "http://app:8000",
+                    "tools": []
+                }).to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+        let reg_bytes = reg_resp.into_body().collect().await.unwrap().to_bytes();
+        let token = serde_json::from_slice::<serde_json::Value>(&reg_bytes).unwrap()["app_token"]
+            .as_str()
+            .unwrap()
+            .to_string();
+
+        // Attempt to infer claiming a DIFFERENT app_id
+        let resp = create_router(
+            Arc::clone(&registry), make_config(), Arc::clone(&store), Some(pool),
+        )
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/v1/infer")
+                .header("content-type", "application/json")
+                .header("authorization", format!("Bearer {token}"))
+                .body(Body::from(serde_json::json!({
+                    "app_id": "otherapp",
+                    "user_id": "u1",
+                    "prompt": "Spoof attempt"
+                }).to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+        assert_eq!(resp.status(), StatusCode::FORBIDDEN);
+    }
 }
