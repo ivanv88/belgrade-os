@@ -98,10 +98,13 @@ async fn handle_register(
         format!("callback_url {:?} is not a valid URL", req.callback_url),
     ))?;
     let scheme = parsed_url.scheme();
-    let raw_authority_empty = req.callback_url
-        .strip_prefix(&format!("{}://", scheme))
-        .map(|rest| rest.starts_with('/') || rest.is_empty())
-        .unwrap_or(true);
+    let raw_authority_empty = {
+        let prefix = format!("{}://", scheme);
+        let raw_lower = req.callback_url.to_lowercase();
+        raw_lower.strip_prefix(&prefix)
+            .map(|_| req.callback_url[prefix.len()..].starts_with('/') || req.callback_url[prefix.len()..].is_empty())
+            .unwrap_or(true)
+    };
     if !matches!(scheme, "http" | "https") || parsed_url.host().is_none() || raw_authority_empty {
         return Err((
             StatusCode::BAD_REQUEST,
