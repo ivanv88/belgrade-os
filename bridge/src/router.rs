@@ -91,6 +91,21 @@ pub struct RegisterResponse {
 }
 
 #[derive(Deserialize)]
+pub struct InferRequest {
+    pub app_id: String,
+    pub user_id: String,
+    pub prompt: String,
+    pub tenant_id: Option<String>,
+    pub trace_id: Option<String>,
+}
+
+#[derive(Serialize)]
+pub struct InferResponse {
+    pub task_id: String,
+    pub trace_id: String,
+}
+
+#[derive(Deserialize)]
 pub struct NotifyRequest {
     pub app_id: String,
     pub user_id: String,
@@ -171,6 +186,59 @@ async fn handle_notify(
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("Redis error: {e}")))?;
 
     Ok(StatusCode::ACCEPTED)
+}
+
+async fn handle_infer(
+    State(state): State<AppState>,
+    headers: axum::http::HeaderMap,
+    Json(req): Json<InferRequest>,
+) -> Result<(StatusCode, Json<InferResponse>), (StatusCode, String)> {
+    let raw_token = extract_bearer(&headers)?;
+
+    let pool = state.pool.as_ref().ok_or((
+        StatusCode::SERVICE_UNAVAILABLE,
+        "Redis not configured".to_string(),
+    ))?;
+
+    let token_app_id = lookup_token(pool, raw_token).await?;
+    if token_app_id != req.app_id {
+        return Err((StatusCode::FORBIDDEN, "app_id does not match token".to_string()));
+    }
+
+    let task_id = format!("app-{}", uuid::Uuid::new_v4().simple());
+    let trace_id = req.trace_id.unwrap_or_else(|| uuid::Uuid::new_v4().simple().to_string());
+    let now_ms = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis() as i64;
+
+    // execution_mode is always UNTRUSTED for app-originated inference
+    let task = crate::belgrade_os::Task {
+        task_id: task_id.clone(),
+        user_id: req.user_id.clone(),
+        prompt: req.prompt.clone(),
+        created_at_ms: now_ms,
+        trace_id: trace_id.clone(),
+        execution_mode: crate::belgrade_os::ExecutionMode::Untrusted as i32,
+        app_id: req.app_id.clone(),
+        tenant_id: req.tenant_id.unwrap_or_default(),
+    };
+
+    let encoded = task.encode_to_vec();
+
+    let mut conn = pool.get().await.map_err(|e| {
+        (StatusCode::INTERNAL_SERVER_ERROR, format!("Redis pool error: {e}"))
+    })?;
+    redis::cmd("XADD")
+        .arg("tasks:inbound")
+        .arg("*")
+        .arg("data")
+        .arg(encoded.as_slice())
+        .query_async::<_, ()>(&mut *conn)
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("Redis error: {e}")))?;
+
+    Ok((StatusCode::ACCEPTED, Json(InferResponse { task_id, trace_id })))
 }
 
 async fn handle_register(
@@ -407,6 +475,7 @@ pub fn create_router(
         .route("/v1/execute", post(handle_execute))
         .route("/v1/events/publish", post(handle_publish))
         .route("/v1/notify", post(handle_notify))
+        .route("/v1/infer", post(handle_infer))
         .route("/v1/notifications/provider", get(handle_notifications_provider))
         .route("/v1/apps/:app_id", get(handle_app_info))
         .with_state(state)
@@ -1146,7 +1215,194 @@ mod tests {
             )
             .await
             .unwrap();
-        
+
         assert_eq!(resp.status(), StatusCode::ACCEPTED);
+    }
+
+    #[tokio::test]
+    async fn test_infer_rejects_missing_auth() {
+        let registry = Arc::new(ToolRegistry::new());
+        let app = make_router(registry); // pool=None
+
+        let body = serde_json::json!({
+            "app_id": "myapp", "user_id": "u1",
+            "prompt": "What is 2+2?"
+        });
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/v1/infer")
+                    .header("content-type", "application/json")
+                    .body(Body::from(body.to_string()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    #[tokio::test]
+    async fn test_infer_returns_503_without_pool() {
+        let registry = Arc::new(ToolRegistry::new());
+        let app = make_router(registry); // pool=None
+
+        let body = serde_json::json!({
+            "app_id": "myapp", "user_id": "u1",
+            "prompt": "What is 2+2?"
+        });
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/v1/infer")
+                    .header("content-type", "application/json")
+                    .header("authorization", "Bearer sometoken")
+                    .body(Body::from(body.to_string()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::SERVICE_UNAVAILABLE);
+    }
+
+    #[tokio::test]
+    async fn test_infer_rejects_invalid_token() {
+        let Some(pool) = try_pool().await else { return };
+        let store: Arc<dyn Store> = Arc::new(crate::store::RedisStore::new_for_test(pool.clone()));
+        let registry = Arc::new(ToolRegistry::new());
+        let app = create_router(registry, make_config(), store, Some(pool));
+
+        let body = serde_json::json!({
+            "app_id": "myapp", "user_id": "u1",
+            "prompt": "What is 2+2?"
+        });
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/v1/infer")
+                    .header("content-type", "application/json")
+                    .header("authorization", "Bearer not_a_real_token_hex")
+                    .body(Body::from(body.to_string()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    #[tokio::test]
+    async fn test_infer_succeeds_with_valid_token() {
+        let Some(pool) = try_pool().await else { return };
+        let store: Arc<dyn Store> = Arc::new(crate::store::RedisStore::new_for_test(pool.clone()));
+        let registry = Arc::new(ToolRegistry::new());
+
+        // Register to get token
+        let reg_resp = create_router(
+            Arc::clone(&registry), make_config(), Arc::clone(&store), Some(pool.clone()),
+        )
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/v1/register")
+                .header("content-type", "application/json")
+                .body(Body::from(serde_json::json!({
+                    "app_id": "myapp",
+                    "callback_url": "http://app:8000",
+                    "tools": []
+                }).to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+        let reg_bytes = reg_resp.into_body().collect().await.unwrap().to_bytes();
+        let token = serde_json::from_slice::<serde_json::Value>(&reg_bytes).unwrap()["app_token"]
+            .as_str()
+            .unwrap()
+            .to_string();
+
+        let body = serde_json::json!({
+            "app_id": "myapp",
+            "user_id": "u1",
+            "prompt": "What is 2+2?"
+        });
+        let resp = create_router(
+            Arc::clone(&registry), make_config(), Arc::clone(&store), Some(pool),
+        )
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/v1/infer")
+                .header("content-type", "application/json")
+                .header("authorization", format!("Bearer {token}"))
+                .body(Body::from(body.to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(resp.status(), StatusCode::ACCEPTED);
+        let bytes = resp.into_body().collect().await.unwrap().to_bytes();
+        let json: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        assert!(json["task_id"].as_str().is_some_and(|s| !s.is_empty()));
+        assert!(json["trace_id"].as_str().is_some_and(|s| !s.is_empty()));
+    }
+
+    #[tokio::test]
+    async fn test_infer_execution_mode_is_always_untrusted() {
+        let Some(pool) = try_pool().await else { return };
+        let store: Arc<dyn Store> = Arc::new(crate::store::RedisStore::new_for_test(pool.clone()));
+        let registry = Arc::new(ToolRegistry::new());
+
+        let reg_resp = create_router(
+            Arc::clone(&registry), make_config(), Arc::clone(&store), Some(pool.clone()),
+        )
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/v1/register")
+                .header("content-type", "application/json")
+                .body(Body::from(serde_json::json!({
+                    "app_id": "myapp",
+                    "callback_url": "http://app:8000",
+                    "tools": []
+                }).to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+        let reg_bytes = reg_resp.into_body().collect().await.unwrap().to_bytes();
+        let token = serde_json::from_slice::<serde_json::Value>(&reg_bytes).unwrap()["app_token"]
+            .as_str()
+            .unwrap()
+            .to_string();
+
+        // Include an explicit (bogus) execution_mode in the request — it must be ignored.
+        let body = serde_json::json!({
+            "app_id": "myapp",
+            "user_id": "u1",
+            "prompt": "Trying to escalate",
+            "execution_mode": 1  // TRUSTED — must be ignored
+        });
+        let resp = create_router(
+            Arc::clone(&registry), make_config(), Arc::clone(&store), Some(pool),
+        )
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/v1/infer")
+                .header("content-type", "application/json")
+                .header("authorization", format!("Bearer {token}"))
+                .body(Body::from(body.to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(resp.status(), StatusCode::ACCEPTED);
+        let bytes = resp.into_body().collect().await.unwrap().to_bytes();
+        let json: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        assert!(json["task_id"].as_str().is_some_and(|s| !s.is_empty()));
     }
 }
