@@ -31,6 +31,7 @@ def _make_task(
 
 def _make_redis() -> AsyncMock:
     mock = AsyncMock()
+    mock.push_untrusted_tool_call = AsyncMock()
     return mock
 
 
@@ -190,3 +191,109 @@ async def test_exception_publishes_error_event():
     error_events = [e for e in events if e.type == belgrade_os_pb2.ERROR]
     assert len(error_events) == 1
     assert "API timeout" in error_events[0].content
+
+
+# ---------------------------------------------------------------------------
+# Test: execution_mode forced UNTRUSTED for app-owned tasks (defense-in-depth)
+# ---------------------------------------------------------------------------
+
+
+async def test_execution_mode_forced_untrusted_for_app_tasks():
+    """Inference must override execution_mode=UNTRUSTED when task.app_id is set,
+    even if the producer wrote TRUSTED into the proto."""
+    from providers.base import StreamDone, ToolUse
+
+    task = belgrade_os_pb2.Task(
+        task_id="t-forge",
+        user_id="u1",
+        prompt="hello",
+        trace_id="tr1",
+        app_id="shopping",  # app-owned
+        execution_mode=belgrade_os_pb2.ExecutionMode.Value("TRUSTED"),  # attempted forge
+    )
+    mock_redis = _make_redis()
+    tool_result = belgrade_os_pb2.ToolResult(
+        call_id="c-forge", task_id="t-forge", success=True, output_json="{}"
+    )
+    mock_redis.read_tool_result = AsyncMock(
+        return_value=("msg-forge", tool_result.SerializeToString())
+    )
+    provider = await _provider_from_events([
+        [StreamDone("tool_use", [ToolUse("c-forge", "shopping:add", {"item": "milk"})])],
+        [StreamDone("end_turn")],
+    ])
+
+    await process_task(task, mock_redis, provider, "worker-1")
+
+    mock_redis.push_untrusted_tool_call.assert_awaited_once()
+    mock_redis.push_tool_call.assert_not_awaited()
+    tc_bytes = mock_redis.push_untrusted_tool_call.await_args.args[0]
+    tc = belgrade_os_pb2.ToolCall()
+    tc.ParseFromString(tc_bytes)
+    assert tc.execution_mode == belgrade_os_pb2.ExecutionMode.Value("UNTRUSTED")
+
+
+async def test_tool_call_carries_tenant_id_from_task():
+    from providers.base import StreamDone, ToolUse
+
+    task = belgrade_os_pb2.Task(
+        task_id="t-tenant",
+        user_id="u1",
+        prompt="hello",
+        trace_id="tr1",
+        tenant_id="household-test",
+        app_id="nutrition",
+    )
+    mock_redis = _make_redis()
+    tool_result = belgrade_os_pb2.ToolResult(
+        call_id="c1", task_id="t-tenant", success=True, output_json="{}"
+    )
+    mock_redis.read_tool_result = AsyncMock(
+        return_value=("msg-1", tool_result.SerializeToString())
+    )
+    provider = await _provider_from_events([
+        [StreamDone("tool_use", [ToolUse("c1", "nutrition:log", {"calories": "500"})])],
+        [StreamDone("end_turn")],
+    ])
+
+    await process_task(task, mock_redis, provider, "worker-1")
+
+    tc_bytes = mock_redis.push_untrusted_tool_call.await_args.args[0]
+    tc = belgrade_os_pb2.ToolCall()
+    tc.ParseFromString(tc_bytes)
+    assert tc.tenant_id == "household-test"
+
+
+async def test_tool_call_carries_execution_mode_when_no_app_id():
+    """When task.app_id is empty (legacy /v1/tasks gateway path), execution_mode is
+    preserved from the task — the Gateway stamped it from TRUSTED_USER_IDS."""
+    from providers.base import StreamDone, ToolUse
+
+    task = belgrade_os_pb2.Task(
+        task_id="t-mode",
+        user_id="u1",
+        prompt="hello",
+        trace_id="tr1",
+        app_id="",  # gateway path — no app_id
+        execution_mode=belgrade_os_pb2.ExecutionMode.Value("TRUSTED"),
+    )
+    mock_redis = _make_redis()
+    tool_result = belgrade_os_pb2.ToolResult(
+        call_id="c2", task_id="t-mode", success=True, output_json="{}"
+    )
+    mock_redis.read_tool_result = AsyncMock(
+        return_value=("msg-2", tool_result.SerializeToString())
+    )
+    provider = await _provider_from_events([
+        [StreamDone("tool_use", [ToolUse("c2", "shopping:add_item", {"item": "milk"})])],
+        [StreamDone("end_turn")],
+    ])
+
+    await process_task(task, mock_redis, provider, "worker-1")
+
+    mock_redis.push_tool_call.assert_awaited_once()
+    mock_redis.push_untrusted_tool_call.assert_not_awaited()
+    tc_bytes = mock_redis.push_tool_call.await_args.args[0]
+    tc = belgrade_os_pb2.ToolCall()
+    tc.ParseFromString(tc_bytes)
+    assert tc.execution_mode == belgrade_os_pb2.ExecutionMode.Value("TRUSTED")

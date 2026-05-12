@@ -45,9 +45,18 @@ async def process_task(
     """Drive the full inference + tool loop for a single task."""
     messages: list = [{"role": "user", "content": task.prompt}]
     
-    # Task currently doesn't carry tenant_id (missing in gateway/handler.go probably)
-    # For now, let's derive it or assume it's passed.
-    tenant_id = "household-vladisavljevic" # Placeholder or derived from registry
+    # Use tenant_id from task if present; fall back to platform default for legacy tasks
+    # (legacy /v1/tasks calls leave tenant_id empty).
+    tenant_id = task.tenant_id or "household-vladisavljevic"
+
+    # Defense-in-depth: if task.app_id is set, the task came from an app via the SDK.
+    # Force UNTRUSTED regardless of what the proto field says — Redis ACLs cannot
+    # validate field values, so this is the enforcement boundary.
+    effective_execution_mode = (
+        belgrade_os_pb2.ExecutionMode.Value("UNTRUSTED")
+        if task.app_id
+        else task.execution_mode
+    )
 
     tools = await fetch_tools()
 
@@ -83,8 +92,14 @@ async def process_task(
                             trace_id=task.trace_id,
                             user_id=task.user_id,
                             tenant_id=tenant_id,
+                            execution_mode=effective_execution_mode,
                         )
-                        await redis.push_tool_call(tc.SerializeToString())
+                        log.debug("tool_call app_id=%s tool=%s mode=%s", task.app_id, tool_use.name, effective_execution_mode)
+                        serialised = tc.SerializeToString()
+                        if effective_execution_mode == belgrade_os_pb2.ExecutionMode.Value("UNTRUSTED"):
+                            await redis.push_untrusted_tool_call(serialised)
+                        else:
+                            await redis.push_tool_call(serialised)
 
                         # Wait for the result
                         result_tuple: Optional[tuple[str, bytes]] = await redis.read_tool_result(

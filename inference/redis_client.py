@@ -7,6 +7,7 @@ import redis.exceptions
 
 INBOUND_STREAM = "tasks:inbound"
 TOOL_CALLS_STREAM = "tasks:tool_calls"
+UNTRUSTED_CALLS_STREAM = "tasks:untrusted_calls"
 TOOL_RESULTS_STREAM = "tasks:tool_results"
 
 _MAX_TOOL_RESULT_ITERATIONS = 10
@@ -52,6 +53,10 @@ class RedisClient:
     async def push_tool_call(self, proto_bytes: bytes) -> None:
         """XADD tasks:tool_calls * data proto_bytes."""
         await self._redis.xadd(TOOL_CALLS_STREAM, {"data": proto_bytes})
+
+    async def push_untrusted_tool_call(self, proto_bytes: bytes) -> None:
+        """XADD tasks:untrusted_calls * data proto_bytes."""
+        await self._redis.xadd(UNTRUSTED_CALLS_STREAM, {"data": proto_bytes})
 
     async def read_tool_result(
         self, consumer_group: str, consumer_id: str, task_id: str
