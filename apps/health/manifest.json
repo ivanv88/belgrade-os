@@ -1,0 +1,10 @@
+{
+  "app_id": "health",
+  "name": "Health Tracker",
+  "ui": {
+    "enabled": false,
+    "bundles": {
+      "api": {}
+    }
+  }
+}

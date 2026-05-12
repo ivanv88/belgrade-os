@@ -1,0 +1,10 @@
+{
+  "app_id": "nutrition",
+  "name": "Nutrition Tracker",
+  "ui": {
+    "enabled": false,
+    "bundles": {
+      "api": {}
+    }
+  }
+}

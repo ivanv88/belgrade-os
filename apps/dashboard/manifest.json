@@ -1,7 +1,6 @@
 {
-  "app_id": "demo_app",
-  "name": "System Integration Demo",
-  "description": "Tests every service in the Belgrade OS ecosystem.",
+  "app_id": "dashboard",
+  "name": "Dashboard",
   "ui": {
     "enabled": true,
     "bundles": {
