@@ -32,6 +32,8 @@ def _make_task(
 def _make_redis() -> AsyncMock:
     mock = AsyncMock()
     mock.push_untrusted_tool_call = AsyncMock()
+    mock.get = AsyncMock(return_value=None)   # no cancel key by default
+    mock.delete = AsyncMock()
     return mock
 
 
@@ -297,3 +299,50 @@ async def test_tool_call_carries_execution_mode_when_no_app_id():
     tc = belgrade_os_pb2.ToolCall()
     tc.ParseFromString(tc_bytes)
     assert tc.execution_mode == belgrade_os_pb2.ExecutionMode.Value("TRUSTED")
+
+
+# ---------------------------------------------------------------------------
+# Cancel key tests
+# ---------------------------------------------------------------------------
+
+async def test_cancel_key_stops_loop_and_publishes_error():
+    task = _make_task(task_id="t-cancel", trace_id="tr-c")
+    mock_redis = _make_redis()
+    mock_redis.get = AsyncMock(return_value="1")   # cancel key is set
+
+    provider = MagicMock()   # generate should never be called
+
+    await process_task(task, mock_redis, provider, "worker-1")
+
+    # Cancel key was deleted
+    mock_redis.delete.assert_awaited_once_with("tasks:cancel:t-cancel")
+
+    # ERROR event published with content "cancelled"
+    events = _parse_published_events(mock_redis)
+    assert len(events) == 1
+    assert events[0].type == belgrade_os_pb2.ERROR
+    assert events[0].content == "cancelled"
+    assert events[0].task_id == "t-cancel"
+    assert events[0].trace_id == "tr-c"
+
+    # Provider was never invoked
+    provider.generate.assert_not_called()
+
+
+async def test_no_cancel_key_proceeds_normally():
+    from providers.base import TextChunk, StreamDone
+
+    task = _make_task(task_id="t-no-cancel")
+    mock_redis = _make_redis()
+    # get returns None (default) — no cancel key
+
+    provider = await _provider_from_events([
+        [TextChunk("hi"), StreamDone("end_turn")],
+    ])
+
+    await process_task(task, mock_redis, provider, "worker-1")
+
+    mock_redis.delete.assert_not_awaited()
+    events = _parse_published_events(mock_redis)
+    done_events = [e for e in events if e.type == belgrade_os_pb2.DONE]
+    assert len(done_events) == 1

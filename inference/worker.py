@@ -62,6 +62,19 @@ async def process_task(
 
     try:
         while True:
+            # Check for cancellation before each inference round.
+            if await redis.get(f"tasks:cancel:{task.task_id}"):
+                await redis.delete(f"tasks:cancel:{task.task_id}")
+                error_event = belgrade_os_pb2.ThoughtEvent(
+                    task_id=task.task_id,
+                    user_id=task.user_id,
+                    trace_id=task.trace_id,
+                    type=belgrade_os_pb2.ERROR,
+                    content="cancelled",
+                )
+                await redis.publish_thought(task.task_id, error_event.SerializeToString())
+                return
+
             async for event in provider.generate(messages, tools or None):
                 if isinstance(event, TextChunk):
                     thought = belgrade_os_pb2.ThoughtEvent(
