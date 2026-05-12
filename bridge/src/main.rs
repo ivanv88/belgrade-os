@@ -1,3 +1,6 @@
+mod belgrade_os {
+    include!(concat!(env!("OUT_DIR"), "/belgrade_os.rs"));
+}
 mod config;
 mod registry;
 mod router;
