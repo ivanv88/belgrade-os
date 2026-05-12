@@ -73,7 +73,7 @@ test: proto
 
 # ─── Dev infrastructure ───────────────────────────────────────────────────────
 dev:
-	docker-compose up -d redis tunnel
+	docker-compose up -d redis db docker-socket-proxy tunnel
 
 # ─── Clean generated artifacts ────────────────────────────────────────────────
 clean:
