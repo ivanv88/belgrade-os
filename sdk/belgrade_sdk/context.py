@@ -141,6 +141,7 @@ class InferenceAdapter:
                     return
         finally:
             await pubsub.unsubscribe(f"sse:{task_id}")
+            await pubsub.aclose()
 
 
 class AppContext:
