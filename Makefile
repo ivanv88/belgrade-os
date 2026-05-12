@@ -1,4 +1,4 @@
-.PHONY: proto build test dev clean deps
+.PHONY: proto build test dev start stop clean deps
 
 PROTO_SRC := proto/belgrade_os.proto
 export PATH := $(PATH):$(shell go env GOPATH)/bin
@@ -74,6 +74,13 @@ test: proto
 # ─── Dev infrastructure ───────────────────────────────────────────────────────
 dev:
 	docker-compose up -d redis db docker-socket-proxy tunnel
+
+start: dev
+	./start.sh
+
+stop:
+	./stop.sh
+	docker-compose down
 
 # ─── Clean generated artifacts ────────────────────────────────────────────────
 clean:
