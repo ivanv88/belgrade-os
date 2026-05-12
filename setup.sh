@@ -112,7 +112,7 @@ user inference on >${INFERENCE_PASS} ~tasks:* &sse:* +ping +xreadgroup +xread +x
 user runner on >${RUNNER_PASS} ~tasks:tool_calls ~tasks:tool_results ~lease:* +ping +xreadgroup +xadd +xack +xgroup +set +del
 user notification on >${NOTIFICATION_PASS} ~tasks:notifications +ping +xreadgroup +xack +xgroup
 user vault on >${VAULT_PASS} ~tasks:vault_ops ~vault:lock:* +ping +xreadgroup +xack +xgroup +set +del
-user bridge on >${BRIDGE_PASS} ~bridge:* +ping +get +set +hget +hset +hmget +hdel +del +sadd +srem +smembers +hgetall +keys
+user bridge on >${BRIDGE_PASS} ~bridge:* ~tasks:notifications ~tasks:inbound +ping +get +set +hget +hset +hmget +hdel +del +sadd +srem +smembers +hgetall +keys +xadd
 user controller on >${CONTROLLER_PASS} ~perms:* ~tasks:tool_results ~tasks:untrusted_calls +ping +hset +hget +hmget +del +xadd +xreadgroup +xack +xgroup
 user app on >${APP_PASS} ~tasks:inbound ~tasks:vault_ops ~tasks:notifications +ping +xadd
 EOF
