@@ -185,3 +185,90 @@ async def test_stream_raises_without_redis():
     with pytest.raises(RuntimeError, match="Redis pool not initialized"):
         async for _ in ctx.inference.stream("t1"):
             pass
+
+
+async def test_await_result_text_mode_concatenates_chunks():
+    from belgrade_sdk.gen import belgrade_os_pb2
+
+    chunk1 = belgrade_os_pb2.ThoughtEvent(
+        task_id="t1", type=belgrade_os_pb2.RESPONSE_CHUNK, content="Hello"
+    )
+    chunk2 = belgrade_os_pb2.ThoughtEvent(
+        task_id="t1", type=belgrade_os_pb2.RESPONSE_CHUNK, content=" world"
+    )
+    done_evt = belgrade_os_pb2.ThoughtEvent(task_id="t1", type=belgrade_os_pb2.DONE)
+    mock_pubsub = _make_pubsub_mock([
+        {"type": "message", "data": chunk1.SerializeToString()},
+        {"type": "message", "data": chunk2.SerializeToString()},
+        {"type": "message", "data": done_evt.SerializeToString()},
+    ])
+    mock_pool = AsyncMock()
+    mock_pool.pubsub = MagicMock(return_value=mock_pubsub)
+
+    ctx = _make_ctx(redis_pool=mock_pool)
+    result = await ctx.inference.await_result("t1", mode="text")
+    assert result == "Hello world"
+
+
+async def test_await_result_full_mode_returns_all_events():
+    from belgrade_sdk.gen import belgrade_os_pb2
+
+    chunk = belgrade_os_pb2.ThoughtEvent(
+        task_id="t1", type=belgrade_os_pb2.RESPONSE_CHUNK, content="hi"
+    )
+    done_evt = belgrade_os_pb2.ThoughtEvent(task_id="t1", type=belgrade_os_pb2.DONE)
+    mock_pubsub = _make_pubsub_mock([
+        {"type": "message", "data": chunk.SerializeToString()},
+        {"type": "message", "data": done_evt.SerializeToString()},
+    ])
+    mock_pool = AsyncMock()
+    mock_pool.pubsub = MagicMock(return_value=mock_pubsub)
+
+    ctx = _make_ctx(redis_pool=mock_pool)
+    result = await ctx.inference.await_result("t1", mode="full")
+    assert isinstance(result, list)
+    assert len(result) == 2
+    assert result[0].type == belgrade_os_pb2.RESPONSE_CHUNK
+    assert result[1].type == belgrade_os_pb2.DONE
+
+
+async def test_await_result_raises_inference_error_on_error_event():
+    from belgrade_sdk.gen import belgrade_os_pb2
+
+    error_evt = belgrade_os_pb2.ThoughtEvent(
+        task_id="t1", type=belgrade_os_pb2.ERROR, content="upstream failure"
+    )
+    mock_pubsub = _make_pubsub_mock([
+        {"type": "message", "data": error_evt.SerializeToString()},
+    ])
+    mock_pool = AsyncMock()
+    mock_pool.pubsub = MagicMock(return_value=mock_pubsub)
+
+    ctx = _make_ctx(redis_pool=mock_pool)
+    with pytest.raises(InferenceError, match="upstream failure"):
+        await ctx.inference.await_result("t1")
+
+
+async def test_await_result_summary_mode_returns_inference_result():
+    from belgrade_sdk.gen import belgrade_os_pb2
+    from belgrade_sdk.context import InferenceResult
+
+    chunk = belgrade_os_pb2.ThoughtEvent(
+        task_id="t1", trace_id="tr1", type=belgrade_os_pb2.RESPONSE_CHUNK, content="Done."
+    )
+    done_evt = belgrade_os_pb2.ThoughtEvent(
+        task_id="t1", trace_id="tr1", type=belgrade_os_pb2.DONE
+    )
+    mock_pubsub = _make_pubsub_mock([
+        {"type": "message", "data": chunk.SerializeToString()},
+        {"type": "message", "data": done_evt.SerializeToString()},
+    ])
+    mock_pool = AsyncMock()
+    mock_pool.pubsub = MagicMock(return_value=mock_pubsub)
+
+    ctx = _make_ctx(redis_pool=mock_pool)
+    result = await ctx.inference.await_result("t1", mode="summary")
+    assert isinstance(result, InferenceResult)
+    assert result.text == "Done."
+    assert result.tool_calls == []
+    assert result.trace_id == "tr1"

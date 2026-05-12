@@ -143,6 +143,35 @@ class InferenceAdapter:
             await pubsub.unsubscribe(f"sse:{task_id}")
             await pubsub.aclose()
 
+    async def await_result(self, task_id: str, mode: str = "text", timeout: float = 300.0):
+        from .gen import belgrade_os_pb2
+        from .exceptions import InferenceError
+
+        events = []
+        async for event in self.stream(task_id, timeout=timeout):
+            events.append(event)
+
+        for event in events:
+            if event.type == belgrade_os_pb2.ERROR:
+                raise InferenceError(event.content)
+
+        if mode == "text":
+            return "".join(
+                e.content for e in events if e.type == belgrade_os_pb2.RESPONSE_CHUNK
+            )
+        if mode == "full":
+            return events
+        if mode == "summary":
+            text = "".join(
+                e.content for e in events if e.type == belgrade_os_pb2.RESPONSE_CHUNK
+            )
+            tool_calls = [
+                e.content for e in events if e.type == belgrade_os_pb2.TOOL_USE
+            ]
+            trace_id = events[0].trace_id if events else ""
+            return InferenceResult(text=text, tool_calls=tool_calls, trace_id=trace_id)
+        raise ValueError(f"Unknown mode {mode!r}. Use 'text', 'full', or 'summary'.")
+
 
 class AppContext:
     def __init__(
