@@ -118,9 +118,9 @@ class InferenceAdapter:
         pubsub = self.ctx._redis_pool.pubsub()
         await pubsub.subscribe(f"sse:{task_id}")
         try:
-            deadline = asyncio.get_event_loop().time() + timeout
+            deadline = asyncio.get_running_loop().time() + timeout
             while True:
-                remaining = deadline - asyncio.get_event_loop().time()
+                remaining = deadline - asyncio.get_running_loop().time()
                 if remaining <= 0:
                     raise InferenceTimeoutError(
                         f"No terminal event for task {task_id} within {timeout}s"

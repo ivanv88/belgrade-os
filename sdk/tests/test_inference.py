@@ -143,6 +143,7 @@ async def test_stream_yields_events_until_done():
     assert events[1].type == belgrade_os_pb2.DONE
     mock_pubsub.subscribe.assert_awaited_once_with("sse:t1")
     mock_pubsub.unsubscribe.assert_awaited_once_with("sse:t1")
+    mock_pubsub.aclose.assert_awaited_once()
 
 
 async def test_stream_yields_error_event_and_terminates():
@@ -166,6 +167,7 @@ async def test_stream_yields_error_event_and_terminates():
     assert events[0].type == belgrade_os_pb2.ERROR
     assert events[0].content == "API failure"
     mock_pubsub.unsubscribe.assert_awaited_once_with("sse:t1")
+    mock_pubsub.aclose.assert_awaited_once()
 
 
 async def test_stream_raises_timeout_when_no_terminal_event():
@@ -178,6 +180,7 @@ async def test_stream_raises_timeout_when_no_terminal_event():
         async for _ in ctx.inference.stream("t1", timeout=0.001):
             pass
     mock_pubsub.unsubscribe.assert_awaited_once_with("sse:t1")
+    mock_pubsub.aclose.assert_awaited_once()
 
 
 async def test_stream_raises_without_redis():
