@@ -1,7 +1,9 @@
 from __future__ import annotations
+import asyncio
 import logging
 import time
 import uuid as _uuid
+from dataclasses import dataclass
 from typing import Any, Optional, Union
 import httpx
 from sqlalchemy.ext.asyncio import AsyncSession, AsyncEngine, async_sessionmaker
@@ -58,6 +60,13 @@ class VaultAdapter:
             logger.error("Failed to publish vault operation: %s", e)
 
 
+@dataclass
+class InferenceResult:
+    text: str
+    tool_calls: list[str]
+    trace_id: str
+
+
 class InferenceAdapter:
     def __init__(self, ctx: "AppContext"):
         self.ctx = ctx
@@ -98,6 +107,40 @@ class InferenceAdapter:
         if not self.ctx._redis_pool:
             raise RuntimeError("Redis pool not initialized in AppContext")
         await self.ctx._redis_pool.set(f"tasks:cancel:{task_id}", "1", ex=3600)
+
+    async def stream(self, task_id: str, timeout: float = 300.0):
+        from .gen import belgrade_os_pb2
+        from .exceptions import InferenceTimeoutError
+
+        if not self.ctx._redis_pool:
+            raise RuntimeError("Redis pool not initialized in AppContext")
+
+        pubsub = self.ctx._redis_pool.pubsub()
+        await pubsub.subscribe(f"sse:{task_id}")
+        try:
+            deadline = asyncio.get_event_loop().time() + timeout
+            while True:
+                remaining = deadline - asyncio.get_event_loop().time()
+                if remaining <= 0:
+                    raise InferenceTimeoutError(
+                        f"No terminal event for task {task_id} within {timeout}s"
+                    )
+                try:
+                    message = await asyncio.wait_for(
+                        pubsub.get_message(ignore_subscribe_messages=True, timeout=0.5),
+                        timeout=min(remaining, 2.0),
+                    )
+                except asyncio.TimeoutError:
+                    continue
+                if message is None:
+                    continue
+                event = belgrade_os_pb2.ThoughtEvent()
+                event.ParseFromString(message["data"])
+                yield event
+                if event.type in (belgrade_os_pb2.DONE, belgrade_os_pb2.ERROR):
+                    return
+        finally:
+            await pubsub.unsubscribe(f"sse:{task_id}")
 
 
 class AppContext:
