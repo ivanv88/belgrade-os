@@ -38,6 +38,8 @@ func main() {
 	// Legacy/internal: direct inference submission. Not the recommended client path.
 	// Apps use ctx.inference.request() via the SDK. Retained for dev tooling + Admin App.
 	mux.HandleFunc("POST /v1/tasks", h.CreateTask)
+	// Subscribe-only SSE for app-owned inference tasks. task_id returned by ctx.inference.request().
+	mux.HandleFunc("GET /v1/tasks/{task_id}/stream", h.StreamTask)
 
 	// UI Module Routes
 	uiMiddleware := ui.AuthMiddleware(cache, cfg.CFAudience)

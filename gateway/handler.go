@@ -107,3 +107,41 @@ func (h *Handler) CreateTask(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusAccepted)
 	json.NewEncoder(w).Encode(taskResponse{TaskID: taskID, TraceID: traceID})
 }
+
+// StreamTask is the subscribe-only SSE endpoint for app-owned inference tasks.
+// The client passes a task_id previously returned by ctx.inference.request().
+// Any authenticated user who holds the task_id UUID may subscribe — the UUID itself
+// acts as a capability token (128-bit entropy, not guessable).
+func (h *Handler) StreamTask(w http.ResponseWriter, r *http.Request) {
+	tokenStr := r.Header.Get("Cf-Access-Jwt-Assertion")
+	if tokenStr == "" {
+		if cookie, err := r.Cookie("CF_Authorization"); err == nil {
+			tokenStr = cookie.Value
+		}
+	}
+	if tokenStr == "" {
+		http.Error(w, "missing authentication", http.StatusUnauthorized)
+		return
+	}
+	if _, err := auth.ValidateToken(tokenStr, h.auth, h.audience); err != nil {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
+
+	taskID := r.PathValue("task_id")
+	if taskID == "" {
+		http.Error(w, "missing task_id", http.StatusBadRequest)
+		return
+	}
+
+	if h.redis == nil {
+		http.Error(w, "failed to set up stream", http.StatusInternalServerError)
+		return
+	}
+	evtCh, err := h.redis.SubscribeSSE(r.Context(), taskID)
+	if err != nil {
+		http.Error(w, "failed to set up stream", http.StatusInternalServerError)
+		return
+	}
+	streamSSE(w, r, evtCh)
+}

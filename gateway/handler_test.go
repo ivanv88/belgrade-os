@@ -124,3 +124,48 @@ func TestHandlerTrustSetWiring(t *testing.T) {
 		t.Fatal("mallory should not be trusted")
 	}
 }
+
+func TestStreamTaskReturns401WithoutAuth(t *testing.T) {
+	// Direct call is valid here: auth check (401) happens before path value extraction.
+	cache := auth.NewTestCache(t, "http://localhost:0")
+	h := NewHandler(cache, nil, "aud", auth.TrustedSet{})
+
+	req := httptest.NewRequest(http.MethodGet, "/v1/tasks/some-task-id/stream", nil)
+	w := httptest.NewRecorder()
+	h.StreamTask(w, req)
+
+	if w.Code != http.StatusUnauthorized {
+		t.Fatalf("expected 401, got %d", w.Code)
+	}
+}
+
+func TestStreamTaskPathValuePopulatedByMux(t *testing.T) {
+	// r.PathValue("task_id") only works through ServeMux. This test verifies the mux
+	// populates the path value: auth passes, task_id is non-empty, next step is
+	// SubscribeSSE which fails (nil redis) → 500, NOT 400 (which would mean empty task_id).
+	key := auth.GenerateTestKey(t)
+	kid := "stream-mux-kid"
+	srv := auth.ServeJWKS(t, &key.PublicKey, kid)
+	defer srv.Close()
+
+	cache := auth.NewTestCache(t, srv.URL)
+	h := NewHandler(cache, nil, "test-aud", auth.TrustedSet{}) // nil redis intentional
+	tokenStr := auth.SignToken(t, key, kid, "user-mux", "test-aud", time.Now().Add(time.Hour))
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /v1/tasks/{task_id}/stream", h.StreamTask)
+
+	req := httptest.NewRequest(http.MethodGet, "/v1/tasks/my-task-uuid-123/stream", nil)
+	req.Header.Set("Cf-Access-Jwt-Assertion", tokenStr)
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, req)
+
+	// 400 would mean task_id was empty (path value not populated by mux) — that's the bug.
+	// nil redis → SubscribeSSE fails → 500 means path value WAS populated correctly.
+	if w.Code == http.StatusBadRequest {
+		t.Fatal("r.PathValue('task_id') not populated by mux — got 400 (empty task_id)")
+	}
+	if w.Code != http.StatusInternalServerError {
+		t.Fatalf("expected 500 (nil redis → subscribe fails), got %d", w.Code)
+	}
+}
