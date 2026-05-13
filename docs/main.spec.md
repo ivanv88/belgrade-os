@@ -134,7 +134,7 @@ at registration time.
 - [x] **Multi-UI Serving**: Gateway `GET /ui/{app_id}/{bundle_id}/...` with per-app config injection.
 - [x] **Vault Service**: Conflict-free Obsidian writes via Redis streams and distributed lock.
 - [x] **RBAC Foundation**: Permission model in Postgres, high-performance Redis cache, permission sync.
-- [x] **Scheduled Tasks**: APScheduler cron via Platform Controller `/schedules` CRUD API, persisted to Postgres.
+- [x] **Scheduled Tasks (Infrastructure)**: APScheduler cron via Platform Controller `/schedules` CRUD API, persisted to Postgres. SDK integration (`ctx.schedule()`) is Phase 2.
 - [x] **Multi-tenant DB Isolation**: Per-app Postgres schema (`app_{tenant_id}_{app_id}`) via `AppContext.db`.
 - [x] **Trust Model**: Gateway stamps TRUSTED/UNTRUSTED from JWT identity. Inference enforces UNTRUSTED for all app-owned tasks (defense-in-depth). Tool calls routed to bare-metal runner (TRUSTED) or ephemeral Docker container (UNTRUSTED).
 - [x] **Ephemeral Runner**: Sandboxed Docker execution — seccomp, read-only FS, `--network none`, 30s timeout.
@@ -150,6 +150,7 @@ Focus: validate the platform with real apps, close known gaps before adding new 
 - [ ] **Manifest Schema Validation**: `_load_manifest()` currently does raw JSON load with no Pydantic validation. Silent failures at startup are hard to debug. Validate against `AppManifest` and reject apps with invalid manifests.
 - [ ] **Filesystem Hot-Reload**: Platform Controller has explicit `POST /apps/reload` but no filesystem watcher. Add inotify-based watch on `apps/` so edits to `main.py` or `manifest.json` trigger a reload automatically.
 - [ ] **Dashboard Shell**: A unified authenticated entry point listing all apps the user has access to, with launch links and basic status.
+- [ ] **App-Owned Scheduling**: Platform Controller has APScheduler + `/schedules` CRUD API (admin-level). Apps cannot schedule tasks from within a request handler yet. Add `ctx.schedule(cron, tool_name, params)` and `ctx.unschedule(schedule_id)` to the SDK, backed by the existing infrastructure. Example use case: meal planner schedules a shopping reminder when it generates a weekly plan.
 - [ ] **Firebase Notification Driver**: `notification/drivers/` has the interface (`base.py`) and ntfy implementation. Firebase driver would unlock mobile push.
 
 ### 🔮 Phase 3: External Connectivity
