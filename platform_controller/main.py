@@ -397,7 +397,7 @@ async def create_schedule(entry: ScheduleEntry):
                 tool_name = EXCLUDED.tool_name,
                 params = EXCLUDED.params,
                 updated_at = NOW()
-        """), entry.dict())
+        """), entry.model_dump())
         await session.commit()
     
     await scheduler_manager.add_schedule(entry)
@@ -415,7 +415,7 @@ async def delete_schedule(schedule_id: str):
 @app.get("/schedules")
 async def list_schedules():
     async with SessionLocal() as session:
-        result = await session.execute(text("SELECT id, user_id, tenant_id, cron, tool_name, params FROM shared.schedules"))
+        result = await session.execute(text("SELECT id, app_id, user_id, tenant_id, cron, tool_name, params FROM shared.schedules"))
         return [dict(row._mapping) for row in result.all()]
 
 if __name__ == "__main__":
