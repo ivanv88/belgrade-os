@@ -262,7 +262,7 @@ async def _process_schedule_op(data: bytes) -> None:
     op = belgrade_os_pb2.ScheduleOp()
     op.ParseFromString(data)
 
-    if op.app_id and not _APP_ID_RE.match(op.app_id):
+    if not _APP_ID_RE.match(op.app_id):
         logger.error("invalid app_id in ScheduleOp: %r — discarding", op.app_id)
         return
 
@@ -303,6 +303,7 @@ async def _process_schedule_op(data: bytes) -> None:
 
 async def _schedule_ops_consumer_loop(redis_url: str) -> None:
     import redis.asyncio as aioredis
+    import redis.exceptions
 
     STREAM = "tasks:schedule_ops"
     GROUP = "schedule-ops-runners"
@@ -339,13 +340,12 @@ async def _schedule_ops_consumer_loop(redis_url: str) -> None:
                     logger.exception(
                         "unhandled error msg=%s — not ACKed, will retry on restart", msg_id
                     )
-        except Exception as exc:
-            if "ConnectionError" in type(exc).__name__:
-                logger.error("schedule ops consumer lost Redis connection, retrying in 5s")
-                await asyncio.sleep(5)
-            else:
-                logger.exception("schedule ops consumer unexpected error")
-                await asyncio.sleep(1)
+        except redis.exceptions.ConnectionError:
+            logger.error("schedule ops consumer lost Redis connection, retrying in 5s")
+            await asyncio.sleep(5)
+        except Exception:
+            logger.exception("schedule ops consumer unexpected error")
+            await asyncio.sleep(1)
 
 
 async def _untrusted_consumer_loop(redis_url: str) -> None:

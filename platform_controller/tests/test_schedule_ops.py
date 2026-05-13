@@ -55,6 +55,7 @@ async def test_process_schedule_op_upsert_calls_add_schedule():
     assert entry.cron == "0 9 * * *"
     assert entry.tool_name == "shopping:summarize"
     assert entry.params == {"limit": 10}
+    assert entry.tenant_id == "t1"
 
 
 @pytest.mark.asyncio
@@ -79,6 +80,18 @@ async def test_process_schedule_op_invalid_app_id_discards():
     with patch.object(ctrl_main, "scheduler_manager", mock_scheduler):
         await ctrl_main._process_schedule_op(
             _build_schedule_op("UPSERT", app_id="../../evil")
+        )
+
+    mock_scheduler.add_schedule.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_process_schedule_op_empty_app_id_discards():
+    mock_scheduler = MagicMock()
+
+    with patch.object(ctrl_main, "scheduler_manager", mock_scheduler):
+        await ctrl_main._process_schedule_op(
+            _build_schedule_op("UPSERT", app_id="")
         )
 
     mock_scheduler.add_schedule.assert_not_called()
