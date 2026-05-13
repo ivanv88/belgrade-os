@@ -40,9 +40,10 @@ _APP_ID_RE = re.compile(r"^[a-zA-Z0-9_-]{1,64}$")
 def _require_token(
     creds: Optional[HTTPAuthorizationCredentials] = Depends(_bearer),
 ) -> None:
-    if not CONTROLLER_TOKEN:
+    token = os.environ.get("CONTROLLER_API_TOKEN", CONTROLLER_TOKEN)
+    if not token:
         raise HTTPException(status_code=500, detail="CONTROLLER_API_TOKEN not set")
-    if creds is None or not secrets.compare_digest(creds.credentials, CONTROLLER_TOKEN):
+    if creds is None or not secrets.compare_digest(creds.credentials, token):
         raise HTTPException(status_code=403, detail="forbidden")
 
 
@@ -515,10 +516,44 @@ async def delete_schedule(schedule_id: str):
     return {"status": "deleted", "id": schedule_id}
 
 @app.get("/schedules")
-async def list_schedules():
+async def list_schedules(app_id: Optional[str] = None, user_id: Optional[str] = None):
     async with SessionLocal() as session:
-        result = await session.execute(text("SELECT id, app_id, user_id, tenant_id, cron, tool_name, params FROM shared.schedules"))
+        if app_id and user_id:
+            result = await session.execute(
+                text("SELECT id, app_id, user_id, tenant_id, cron, tool_name, params FROM shared.schedules WHERE app_id = :app_id AND user_id = :user_id"),
+                {"app_id": app_id, "user_id": user_id},
+            )
+        elif app_id:
+            result = await session.execute(
+                text("SELECT id, app_id, user_id, tenant_id, cron, tool_name, params FROM shared.schedules WHERE app_id = :app_id"),
+                {"app_id": app_id},
+            )
+        else:
+            result = await session.execute(
+                text("SELECT id, app_id, user_id, tenant_id, cron, tool_name, params FROM shared.schedules")
+            )
         return [dict(row._mapping) for row in result.all()]
+
+
+@app.delete("/apps/{app_id}/schedules")
+async def delete_app_schedules(app_id: str, _: None = Depends(_require_token)):
+    if not _APP_ID_RE.match(app_id):
+        raise HTTPException(status_code=400, detail="invalid app_id")
+    async with SessionLocal() as session:
+        result = await session.execute(
+            text("SELECT id FROM shared.schedules WHERE app_id = :app_id"),
+            {"app_id": app_id},
+        )
+        ids = [row[0] for row in result.all()]
+        for schedule_id in ids:
+            scheduler_manager.remove_schedule(schedule_id)
+        await session.execute(
+            text("DELETE FROM shared.schedules WHERE app_id = :app_id"),
+            {"app_id": app_id},
+        )
+        await session.commit()
+    logger.info("deleted %d schedules for app_id=%s", len(ids), app_id)
+    return {"cancelled": len(ids), "app_id": app_id}
 
 if __name__ == "__main__":
     import uvicorn

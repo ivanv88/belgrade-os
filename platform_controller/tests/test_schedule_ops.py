@@ -102,3 +102,111 @@ async def test_process_schedule_op_malformed_proto_raises():
     from google.protobuf.message import DecodeError
     with pytest.raises(DecodeError):
         await ctrl_main._process_schedule_op(b"not a proto")
+
+
+from fastapi.testclient import TestClient
+
+
+def _make_test_client():
+    import os
+    os.environ.setdefault("CONTROLLER_API_TOKEN", "test-token")
+    return TestClient(ctrl_main.app)
+
+
+@pytest.mark.asyncio
+async def test_list_schedules_filter_by_app_id():
+    mock_session_cm = AsyncMock()
+    mock_session = AsyncMock()
+    mock_session_cm.__aenter__ = AsyncMock(return_value=mock_session)
+    mock_session_cm.__aexit__ = AsyncMock(return_value=False)
+
+    mock_row = MagicMock()
+    mock_row._mapping = {
+        "id": "shopping:u1:daily-summary",
+        "app_id": "shopping",
+        "user_id": "u1",
+        "tenant_id": "t1",
+        "cron": "0 9 * * *",
+        "tool_name": "shopping:summarize",
+        "params": {"limit": 10},
+    }
+    mock_result = MagicMock()
+    mock_result.all.return_value = [mock_row]
+    mock_session.execute = AsyncMock(return_value=mock_result)
+
+    with patch.object(ctrl_main, "SessionLocal", return_value=mock_session_cm):
+        client = _make_test_client()
+        resp = client.get("/schedules?app_id=shopping")
+
+    assert resp.status_code == 200
+    data = resp.json()
+    assert len(data) == 1
+    assert data[0]["app_id"] == "shopping"
+
+
+@pytest.mark.asyncio
+async def test_delete_app_schedules_removes_all():
+    mock_scheduler = MagicMock()
+    mock_session_cm = AsyncMock()
+    mock_session = AsyncMock()
+    mock_session_cm.__aenter__ = AsyncMock(return_value=mock_session)
+    mock_session_cm.__aexit__ = AsyncMock(return_value=False)
+
+    mock_result = MagicMock()
+    mock_result.all.return_value = [("shopping:u1:daily-summary",), ("shopping:u2:nightly",)]
+    mock_session.execute = AsyncMock(return_value=mock_result)
+
+    with patch.object(ctrl_main, "scheduler_manager", mock_scheduler), \
+         patch.object(ctrl_main, "SessionLocal", return_value=mock_session_cm):
+        client = _make_test_client()
+        resp = client.delete(
+            "/apps/shopping/schedules",
+            headers={"Authorization": "Bearer test-token"},
+        )
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["cancelled"] == 2
+    assert body["app_id"] == "shopping"
+    assert mock_scheduler.remove_schedule.call_count == 2
+
+
+@pytest.mark.asyncio
+async def test_delete_app_schedules_returns_zero_when_none():
+    mock_scheduler = MagicMock()
+    mock_session_cm = AsyncMock()
+    mock_session = AsyncMock()
+    mock_session_cm.__aenter__ = AsyncMock(return_value=mock_session)
+    mock_session_cm.__aexit__ = AsyncMock(return_value=False)
+
+    mock_result = MagicMock()
+    mock_result.all.return_value = []
+    mock_session.execute = AsyncMock(return_value=mock_result)
+
+    with patch.object(ctrl_main, "scheduler_manager", mock_scheduler), \
+         patch.object(ctrl_main, "SessionLocal", return_value=mock_session_cm):
+        client = _make_test_client()
+        resp = client.delete(
+            "/apps/shopping/schedules",
+            headers={"Authorization": "Bearer test-token"},
+        )
+
+    assert resp.status_code == 200
+    assert resp.json()["cancelled"] == 0
+
+
+@pytest.mark.asyncio
+async def test_delete_app_schedules_rejects_invalid_app_id():
+    client = _make_test_client()
+    resp = client.delete(
+        "/apps/../evil/schedules",
+        headers={"Authorization": "Bearer test-token"},
+    )
+    assert resp.status_code in (400, 404)
+
+
+@pytest.mark.asyncio
+async def test_delete_app_schedules_requires_token():
+    client = _make_test_client()
+    resp = client.delete("/apps/shopping/schedules")
+    assert resp.status_code == 403
