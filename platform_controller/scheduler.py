@@ -14,6 +14,7 @@ logger = logging.getLogger(__name__)
 
 class ScheduleEntry(BaseModel):
     id: str
+    app_id: str = ""
     user_id: str
     tenant_id: str
     cron: str

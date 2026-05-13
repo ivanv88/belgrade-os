@@ -330,6 +330,9 @@ async def startup_event():
                 updated_at TIMESTAMPTZ DEFAULT NOW()
             )
         """))
+        await conn.execute(text(
+            "ALTER TABLE shared.schedules ADD COLUMN IF NOT EXISTS app_id TEXT NOT NULL DEFAULT ''"
+        ))
         await conn.execute(text("""
             CREATE TABLE IF NOT EXISTS shared.app_permissions (
                 user_id TEXT NOT NULL,
@@ -349,15 +352,16 @@ async def startup_event():
     await permission_sync.sync_all()
 
     async with SessionLocal() as session:
-        result = await session.execute(text("SELECT id, user_id, tenant_id, cron, tool_name, params FROM shared.schedules"))
+        result = await session.execute(text("SELECT id, app_id, user_id, tenant_id, cron, tool_name, params FROM shared.schedules"))
         for row in result.all():
             entry = ScheduleEntry(
                 id=row[0],
-                user_id=row[1],
-                tenant_id=row[2],
-                cron=row[3],
-                tool_name=row[4],
-                params=row[5]
+                app_id=row[1],
+                user_id=row[2],
+                tenant_id=row[3],
+                cron=row[4],
+                tool_name=row[5],
+                params=row[6]
             )
             await scheduler_manager.add_schedule(entry)
 
@@ -383,9 +387,10 @@ async def list_apps():
 async def create_schedule(entry: ScheduleEntry):
     async with SessionLocal() as session:
         await session.execute(text("""
-            INSERT INTO shared.schedules (id, user_id, tenant_id, cron, tool_name, params, updated_at)
-            VALUES (:id, :user_id, :tenant_id, :cron, :tool_name, :params, NOW())
+            INSERT INTO shared.schedules (id, app_id, user_id, tenant_id, cron, tool_name, params, updated_at)
+            VALUES (:id, :app_id, :user_id, :tenant_id, :cron, :tool_name, :params, NOW())
             ON CONFLICT (id) DO UPDATE SET
+                app_id = EXCLUDED.app_id,
                 user_id = EXCLUDED.user_id,
                 tenant_id = EXCLUDED.tenant_id,
                 cron = EXCLUDED.cron,
