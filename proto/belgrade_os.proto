@@ -147,13 +147,13 @@ message ScheduleOp {
     UPSERT              = 1;
     DELETE              = 2;
   }
-  OpType op          = 1;
-  string schedule_id = 2;   // "{app_id}:{user_id}:{name}" — APScheduler job id
-  string app_id      = 3;
-  string user_id     = 4;
-  string tenant_id   = 5;
-  string cron        = 6;   // 5-field cron expression; empty on DELETE
-  string tool_name   = 7;   // e.g. "shopping:summarize"; empty on DELETE
-  string params_json = 8;   // JSON object string; "{}" on DELETE
-  string trace_id    = 9;
+  string trace_id    = 1;
+  OpType op          = 2;
+  string schedule_id = 3;   // "{app_id}:{user_id}:{name}" — APScheduler job id
+  string app_id      = 4;
+  string user_id     = 5;
+  string tenant_id   = 6;
+  string cron        = 7;   // 5-field cron expression; empty on DELETE
+  string tool_name   = 8;   // e.g. "shopping:summarize"; empty on DELETE
+  string params_json = 9;   // JSON object string; "{}" on DELETE
 }
