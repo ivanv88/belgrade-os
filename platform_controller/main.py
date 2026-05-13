@@ -256,6 +256,98 @@ async def process_untrusted_call(
     )
 
 
+async def _process_schedule_op(data: bytes) -> None:
+    from gen import belgrade_os_pb2
+
+    op = belgrade_os_pb2.ScheduleOp()
+    op.ParseFromString(data)
+
+    if op.app_id and not _APP_ID_RE.match(op.app_id):
+        logger.error("invalid app_id in ScheduleOp: %r — discarding", op.app_id)
+        return
+
+    if op.op == belgrade_os_pb2.ScheduleOp.UPSERT:
+        entry = ScheduleEntry(
+            id=op.schedule_id,
+            app_id=op.app_id,
+            user_id=op.user_id,
+            tenant_id=op.tenant_id,
+            cron=op.cron,
+            tool_name=op.tool_name,
+            params=json.loads(op.params_json) if op.params_json else {},
+        )
+        async with SessionLocal() as session:
+            await session.execute(text("""
+                INSERT INTO shared.schedules (id, app_id, user_id, tenant_id, cron, tool_name, params, updated_at)
+                VALUES (:id, :app_id, :user_id, :tenant_id, :cron, :tool_name, :params, NOW())
+                ON CONFLICT (id) DO UPDATE SET
+                    cron = EXCLUDED.cron,
+                    tool_name = EXCLUDED.tool_name,
+                    params = EXCLUDED.params,
+                    updated_at = NOW()
+            """), entry.model_dump())
+            await session.commit()
+        await scheduler_manager.add_schedule(entry)
+        logger.info("schedule upserted id=%s tool=%s cron=%s", op.schedule_id, op.tool_name, op.cron)
+
+    elif op.op == belgrade_os_pb2.ScheduleOp.DELETE:
+        async with SessionLocal() as session:
+            await session.execute(
+                text("DELETE FROM shared.schedules WHERE id = :id"),
+                {"id": op.schedule_id},
+            )
+            await session.commit()
+        scheduler_manager.remove_schedule(op.schedule_id)
+        logger.info("schedule deleted id=%s", op.schedule_id)
+
+
+async def _schedule_ops_consumer_loop(redis_url: str) -> None:
+    import redis.asyncio as aioredis
+
+    STREAM = "tasks:schedule_ops"
+    GROUP = "schedule-ops-runners"
+    CONSUMER = "platform-controller"
+
+    rdb = aioredis.from_url(redis_url, decode_responses=False)
+    try:
+        await rdb.xgroup_create(STREAM, GROUP, id="0", mkstream=True)
+    except Exception:
+        pass  # BUSYGROUP on restart
+
+    logger.info("schedule ops consumer started stream=%s group=%s", STREAM, GROUP)
+    while True:
+        try:
+            results = await rdb.xreadgroup(
+                groupname=GROUP,
+                consumername=CONSUMER,
+                streams={STREAM: ">"},
+                count=1,
+                block=2000,
+            )
+            if not results:
+                continue
+            _stream, messages = results[0]
+            for msg_id, fields in messages:
+                data = fields.get(b"data")
+                if data is None:
+                    await rdb.xack(STREAM, GROUP, msg_id)
+                    continue
+                try:
+                    await _process_schedule_op(data)
+                    await rdb.xack(STREAM, GROUP, msg_id)
+                except Exception:
+                    logger.exception(
+                        "unhandled error msg=%s — not ACKed, will retry on restart", msg_id
+                    )
+        except Exception as exc:
+            if "ConnectionError" in type(exc).__name__:
+                logger.error("schedule ops consumer lost Redis connection, retrying in 5s")
+                await asyncio.sleep(5)
+            else:
+                logger.exception("schedule ops consumer unexpected error")
+                await asyncio.sleep(1)
+
+
 async def _untrusted_consumer_loop(redis_url: str) -> None:
     import redis.asyncio as aioredis
     import redis.exceptions
@@ -367,6 +459,7 @@ async def startup_event():
 
     # 4. Start untrusted calls consumer
     asyncio.create_task(_untrusted_consumer_loop(REDIS_URL))
+    asyncio.create_task(_schedule_ops_consumer_loop(REDIS_URL))
     asyncio.create_task(app_supervisor.watch())
 
 @app.post("/apps/reload")
