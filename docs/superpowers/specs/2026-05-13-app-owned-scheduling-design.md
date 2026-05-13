@@ -17,6 +17,32 @@ App tool handler
                                               └─ shared.schedules (Postgres)
 ```
 
+## Schedule Scoping
+
+Schedules are scoped per-app via `manifest.json`, following the same pattern as the notification driver. The app declares once; the SDK is transparent at call sites.
+
+```json
+{ "app_id": "shopping", "scheduling": { "scope": "user" } }
+```
+
+| Value | `schedule_id` format | Use case |
+|---|---|---|
+| `"user"` (default) | `"{app_id}:{user_id}:{name}"` | Per-user recurring actions |
+| `"app"` | `"{app_id}:{name}"` | App-level housekeeping jobs |
+
+Platform Controller reads `manifest.scheduling.scope` at app startup and injects it as `BEG_OS_SCHEDULE_SCOPE` env var, exactly as it does for `BEG_OS_NOTIFICATION_DRIVER`. The SDK reads `BEG_OS_SCHEDULE_SCOPE` (default: `"user"`) from the environment when constructing the `schedule_id`.
+
+Both `_AppManifest` (Platform Controller) and `AppManifest` (SDK `models.py`) gain:
+
+```python
+class _SchedulingManifest(BaseModel):
+    scope: str = "user"   # "user" | "app"
+
+class _AppManifest(BaseModel):
+    ...
+    scheduling: Optional[_SchedulingManifest] = None
+```
+
 ## Proto Contract
 
 New message added to `proto/belgrade_os.proto`:
@@ -28,7 +54,7 @@ message ScheduleOp {
     DELETE = 1;
   }
   OpType op = 1;
-  string schedule_id = 2;   // "{app_id}:{name}" — e.g. "shopping:daily-summary"
+  string schedule_id = 2;   // "{app_id}:{user_id}:{name}" or "{app_id}:{name}" per scope
   string app_id = 3;
   string user_id = 4;
   string tenant_id = 5;
@@ -48,8 +74,8 @@ await ctx.schedule("daily-summary", "0 9 * * *", "shopping:summarize", params={"
 await ctx.unschedule("daily-summary")
 ```
 
-- `schedule(name, cron, tool_name, params={})` — builds a `ScheduleOp(op=UPSERT)` and XADDs to `tasks:schedule_ops`. The `schedule_id` is `f"{app_id}:{name}"`. `app_id`, `user_id`, `tenant_id`, and `trace_id` are injected from context.
-- `unschedule(name)` — builds a `ScheduleOp(op=DELETE)` with `schedule_id = f"{app_id}:{name}"` and XADDs to `tasks:schedule_ops`.
+- `schedule(name, cron, tool_name, params={})` — builds a `ScheduleOp(op=UPSERT)` and XADDs to `tasks:schedule_ops`. The `schedule_id` is computed from `BEG_OS_SCHEDULE_SCOPE`: `"{app_id}:{user_id}:{name}"` for `"user"` scope, `"{app_id}:{name}"` for `"app"` scope. `app_id`, `user_id`, `tenant_id`, and `trace_id` are injected from context.
+- `unschedule(name)` — builds a `ScheduleOp(op=DELETE)` with the same `schedule_id` derivation and XADDs to `tasks:schedule_ops`.
 - Both raise `RuntimeError` if `_redis_pool` is not initialized.
 - Methods live directly on `AppContext` (not behind a sub-adapter).
 
@@ -117,7 +143,8 @@ Extending the existing `/schedules` routes in Platform Controller:
 
 ## Testing
 
-- SDK: unit tests for `ctx.schedule()` and `ctx.unschedule()` — assert proto fields and stream write, mock `_redis_pool`
+- SDK: unit tests for `ctx.schedule()` and `ctx.unschedule()` — assert proto fields and stream write, mock `_redis_pool`; test both `"user"` and `"app"` scope produce correct `schedule_id`
+- Platform Controller: test `AppProcess.start()` injects `BEG_OS_SCHEDULE_SCOPE` from manifest, falls back to `"user"` when absent
 - Platform Controller: unit tests for the consumer logic — UPSERT calls `add_schedule`, DELETE calls `remove_schedule`, invalid `app_id` is discarded
 - Platform Controller: test `DELETE /apps/{app_id}/schedules` — removes all matching schedules, returns correct count
 - Platform Controller: test `GET /schedules?app_id` filter
