@@ -1,5 +1,6 @@
 from __future__ import annotations
 import asyncio
+import json
 import logging
 import time
 import uuid as _uuid
@@ -277,9 +278,9 @@ class AppContext:
         params: dict | None = None,
     ) -> None:
         """Schedule a recurring tool call via tasks:schedule_ops stream."""
-        import json as _json
         from .gen import belgrade_os_pb2
 
+        # Raise on failure — unlike notify(), schedule registration must be confirmed.
         if not self._redis_pool:
             raise RuntimeError("Redis pool not initialized in AppContext")
 
@@ -291,7 +292,7 @@ class AppContext:
         op.tenant_id = self.tenant_id or ""
         op.cron = cron
         op.tool_name = tool_name
-        op.params_json = _json.dumps(params or {})
+        op.params_json = json.dumps(params or {})
         op.trace_id = self.trace_id or ""
 
         await self._redis_pool.xadd(
@@ -303,6 +304,7 @@ class AppContext:
         """Cancel a scheduled tool call via tasks:schedule_ops stream."""
         from .gen import belgrade_os_pb2
 
+        # Raise on failure — unlike notify(), schedule registration must be confirmed.
         if not self._redis_pool:
             raise RuntimeError("Redis pool not initialized in AppContext")
 

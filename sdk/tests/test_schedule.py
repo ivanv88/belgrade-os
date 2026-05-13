@@ -78,6 +78,8 @@ async def test_unschedule_publishes_delete_op():
     assert op.schedule_id == "shopping:u1:daily-summary"
     assert op.app_id == "shopping"
     assert op.user_id == "u1"
+    assert op.trace_id == "tr-1"
+    assert op.params_json == "{}"
 
 
 @pytest.mark.asyncio
