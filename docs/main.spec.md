@@ -124,27 +124,42 @@ at registration time.
 
 ## 6. Roadmap (Current Status)
 
-### ✅ Phase 1: Distributed Foundation (Completed Today)
-- [x] **6-Service Architecture**: Gateway, Bridge, Inference, Runner, Controller, Notification.
-- [x] **Notification Service**: Centralized Redis-based service with ntfy.sh and DLO support.
-- [x] **Persistent Bridge**: Bridge registry migrated to write-through Redis cache.
-- [x] **OS Kernel**: Platform Controller with sub-process management and manifest injection.
-- [x] **Belgrade SDK**: Shared connection pooling for DB/Redis and native notification support.
-- [x] **Event Bus**: Authoritative pub/sub broker implemented in the Bridge.
-- [x] **Multi-UI Service**: Go-based secure static asset serving with auto-config injection.
-- [x] **Vault Service**: Conflict-free, indirect vault writing via Redis streams and locks.
-- [x] **RBAC Foundation**: Centralized permission management with high-performance Redis caching.
+### ✅ Phase 1: Distributed Foundation
+- [x] **6-Service Architecture**: Gateway (Go), Bridge (Rust), Inference (Python), Runner (Python), Platform Controller (Python), Notification (Python).
+- [x] **Notification Service**: Redis stream consumer, ntfy driver, dead-letter queue.
+- [x] **Persistent Bridge**: Tool registry with write-through Redis cache; URL-parse validation on registration.
+- [x] **Platform Controller**: App subprocess supervision, crash-restart watchdog, manifest injection.
+- [x] **Belgrade SDK** (`belgrade_sdk`): `BelgradeApp` base class — `@tool`, `@on_event`, `/execute` callback, `AppContext` with db/redis/vault/notify/emit/inference.
+- [x] **Event Bus**: Bridge `/v1/events/publish` → app `/events` callback routing.
+- [x] **Multi-UI Serving**: Gateway `GET /ui/{app_id}/{bundle_id}/...` with per-app config injection.
+- [x] **Vault Service**: Conflict-free Obsidian writes via Redis streams and distributed lock.
+- [x] **RBAC Foundation**: Permission model in Postgres, high-performance Redis cache, permission sync.
+- [x] **Scheduled Tasks**: APScheduler cron via Platform Controller `/schedules` CRUD API, persisted to Postgres.
+- [x] **Multi-tenant DB Isolation**: Per-app Postgres schema (`app_{tenant_id}_{app_id}`) via `AppContext.db`.
+- [x] **Trust Model**: Gateway stamps TRUSTED/UNTRUSTED from JWT identity. Inference enforces UNTRUSTED for all app-owned tasks (defense-in-depth). Tool calls routed to bare-metal runner (TRUSTED) or ephemeral Docker container (UNTRUSTED).
+- [x] **Ephemeral Runner**: Sandboxed Docker execution — seccomp, read-only FS, `--network none`, 30s timeout.
+- [x] **App Action Proxy**: Gateway `POST/GET/PUT/DELETE/PATCH /api/{app_id}/...` — RBAC-checked, header-sanitized reverse proxy via Bridge callback lookup.
+- [x] **Inference Providers**: Claude (Anthropic), Gemini, Ollama (local LLMs via OpenAI-compatible API).
+- [x] **App-Owned Inference Workflows**: `ctx.inference.request/stream/await_result/cancel` — apps drive stateful multi-step AI workflows; cancel key checked at each tool-loop iteration.
 
-### 🚀 Phase 2: The Nervous System (Next)
-- [ ] **Platform Connectors**: OAuth-managed connectors for Google Drive, Calendar, and Gmail.
-- [ ] **Stateful Workflows**: Built-in support for long-running multi-app sequences.
-- [ ] **Dashboard Shell**: A unified entry point listing all authorized user apps.
+### 🚀 Phase 2: First Apps + Platform Hardening (Current)
 
-### 🔮 Phase 3: AI Intelligence
-- [ ] **Admin Agent Evolution**: Enable the agent to auto-install apps from Git URLs.
-- [ ] **Self-Healing**: Agent monitoring of app.log to fix bugs automatically.
-- [ ] **Workflow Orchestrator**: LLM-driven complex multi-app sequences.
-**: LLM-driven complex multi-app sequences.
-s from Git URLs.
-- [ ] **Self-Healing**: Agent monitoring of app.log to fix bugs automatically.
-- [ ] **Workflow Orchestrator**: LLM-driven complex multi-app sequences.
+Focus: validate the platform with real apps, close known gaps before adding new features.
+
+- [ ] **First App (Shopping List / Meal Planner)**: End-to-end validation of the full stack — inference workflows, vault writes, notifications, scheduled tasks.
+- [ ] **Manifest Schema Validation**: `_load_manifest()` currently does raw JSON load with no Pydantic validation. Silent failures at startup are hard to debug. Validate against `AppManifest` and reject apps with invalid manifests.
+- [ ] **Filesystem Hot-Reload**: Platform Controller has explicit `POST /apps/reload` but no filesystem watcher. Add inotify-based watch on `apps/` so edits to `main.py` or `manifest.json` trigger a reload automatically.
+- [ ] **Dashboard Shell**: A unified authenticated entry point listing all apps the user has access to, with launch links and basic status.
+- [ ] **Firebase Notification Driver**: `notification/drivers/` has the interface (`base.py`) and ntfy implementation. Firebase driver would unlock mobile push.
+
+### 🔮 Phase 3: External Connectivity
+
+- [ ] **MCP Server**: Expose OS tools over the Model Context Protocol so external agents (Claude, ChatGPT) can authenticate and invoke app tools. Bridge `/v1/tools` is the data source; MCP needs the protocol layer, auth, and lazy tool-description loading.
+- [ ] **Standalone App Mode** (Feature 1.1): Documented path for apps that run in their own containers but consume platform services (gateway auth, notifications, inference). Define the networking contract and env vars.
+- [ ] **Platform Connectors**: OAuth-managed connectors for Google Drive, Calendar, Gmail — exposed as tools apps can call via the SDK.
+
+### 🔮 Phase 4: AI Intelligence
+
+- [ ] **Admin Agent**: Agent with access to platform internals — can install apps from Git URLs, inspect logs, restart services.
+- [ ] **Self-Healing**: Agent monitoring of `app.log` output; detects errors and proposes or applies fixes.
+- [ ] **Platform Self-Modification**: Agent can edit app code and UI within safety guardrails. Requires audit log and human-approval gate.
