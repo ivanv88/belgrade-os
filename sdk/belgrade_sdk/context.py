@@ -269,6 +269,56 @@ class AppContext:
         except Exception as e:
             logger.error("Failed to emit event %s: %s", topic, e)
 
+    async def schedule(
+        self,
+        name: str,
+        cron: str,
+        tool_name: str,
+        params: dict | None = None,
+    ) -> None:
+        """Schedule a recurring tool call via tasks:schedule_ops stream."""
+        import json as _json
+        from .gen import belgrade_os_pb2
+
+        if not self._redis_pool:
+            raise RuntimeError("Redis pool not initialized in AppContext")
+
+        op = belgrade_os_pb2.ScheduleOp()
+        op.op = belgrade_os_pb2.ScheduleOp.UPSERT
+        op.schedule_id = f"{self.app_id}:{self.user_id or ''}:{name}"
+        op.app_id = self.app_id
+        op.user_id = self.user_id or ""
+        op.tenant_id = self.tenant_id or ""
+        op.cron = cron
+        op.tool_name = tool_name
+        op.params_json = _json.dumps(params or {})
+        op.trace_id = self.trace_id or ""
+
+        await self._redis_pool.xadd(
+            defaults.STREAM_SCHEDULE_OPS,
+            {"data": op.SerializeToString()},
+        )
+
+    async def unschedule(self, name: str) -> None:
+        """Cancel a scheduled tool call via tasks:schedule_ops stream."""
+        from .gen import belgrade_os_pb2
+
+        if not self._redis_pool:
+            raise RuntimeError("Redis pool not initialized in AppContext")
+
+        op = belgrade_os_pb2.ScheduleOp()
+        op.op = belgrade_os_pb2.ScheduleOp.DELETE
+        op.schedule_id = f"{self.app_id}:{self.user_id or ''}:{name}"
+        op.app_id = self.app_id
+        op.user_id = self.user_id or ""
+        op.trace_id = self.trace_id or ""
+        op.params_json = "{}"
+
+        await self._redis_pool.xadd(
+            defaults.STREAM_SCHEDULE_OPS,
+            {"data": op.SerializeToString()},
+        )
+
     async def cleanup(self) -> None:
         """Closes the DB session if it was opened. The shared engine and redis pool are NOT closed here."""
         if self._db_session:

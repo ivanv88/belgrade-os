@@ -17,6 +17,7 @@ STREAM_TASKS_INBOUND = "tasks:inbound"
 STREAM_TASKS_TOOL_CALLS = "tasks:tool_calls"
 STREAM_TASKS_TOOL_RESULTS = "tasks:tool_results"
 STREAM_NOTIFICATIONS = "tasks:notifications"
+STREAM_SCHEDULE_OPS = "tasks:schedule_ops"
 
 CONSUMER_GROUP_NOTIFICATIONS = "notification-workers"
 
