@@ -9,7 +9,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Dict, List, Optional
 from fastapi import FastAPI, HTTPException
-from pydantic import BaseModel
+from pydantic import BaseModel, ValidationError
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
 from sqlalchemy import text, Column, String, JSON, DateTime
 from sqlalchemy.orm import declarative_base
@@ -49,6 +49,28 @@ def _require_token(
 engine = create_async_engine(DB_URL)
 SessionLocal = async_sessionmaker(engine, expire_on_commit=False)
 
+# --- Manifest Models (inline, no SDK dependency) ---
+class _NotificationsManifest(BaseModel):
+    driver: Optional[str] = None
+
+class _UIBundleManifest(BaseModel):
+    type: str = "spa"
+    path: str = "static/"
+    entry: str = "index.html"
+    required_role: Optional[str] = None
+
+class _AppUIManifest(BaseModel):
+    enabled: bool = False
+    bundles: Dict[str, _UIBundleManifest] = {}
+
+class _AppManifest(BaseModel):
+    app_id: str
+    name: Optional[str] = None
+    ui: Optional[_AppUIManifest] = None
+    related_apps: List[str] = []
+    notifications: Optional[_NotificationsManifest] = None
+
+
 # --- App Supervision ---
 class AppProcess:
     def __init__(self, app_id: str, path: Path, port: int):
@@ -57,22 +79,33 @@ class AppProcess:
         self.port = port
         self.process: Optional[subprocess.Popen] = None
 
-    def _load_manifest(self) -> dict:
-        """Load manifest.json from the app directory. Returns {} if absent or invalid."""
+    def _load_manifest(self) -> Optional["_AppManifest"]:
+        """Load and validate manifest.json from the app directory.
+
+        Returns None when manifest.json is absent.
+        Raises ValueError for invalid JSON or schema violations.
+        """
         manifest_path = self.path / "manifest.json"
-        if manifest_path.exists():
-            try:
-                with open(manifest_path) as f:
-                    return json.load(f)
-            except Exception:
-                logger.warning("Failed to load manifest for %s", self.app_id)
-        return {}
+        if not manifest_path.exists():
+            return None
+        try:
+            data = json.loads(manifest_path.read_text())
+        except json.JSONDecodeError as exc:
+            raise ValueError(
+                f"manifest.json for app '{self.app_id}' is not valid JSON: {exc}"
+            ) from exc
+        try:
+            return _AppManifest.model_validate(data)
+        except ValidationError as exc:
+            raise ValueError(
+                f"manifest.json for app '{self.app_id}' failed schema validation:\n{exc}"
+            ) from exc
 
     async def start(self):
         manifest = self._load_manifest()
         # Per-app driver from manifest overrides the global env var.
         notification_driver = (
-            manifest.get("notifications", {}).get("driver")
+            (manifest.notifications.driver if manifest and manifest.notifications else None)
             or os.getenv("BEG_OS_NOTIFICATION_DRIVER", "ntfy")
         )
 
@@ -131,11 +164,15 @@ class AppSupervisor:
     async def start_app(self, app_id: str):
         if app_id in self.running_apps:
             await self.stop_app(app_id)
-            
+
         app_path = self.apps_root / app_id
         app_process = AppProcess(app_id, app_path, self.next_port)
-        await app_process.start()
-        
+        try:
+            await app_process.start()
+        except ValueError as exc:
+            logger.error("Skipping app %s — invalid manifest: %s", app_id, exc)
+            return
+
         self.running_apps[app_id] = app_process
         self.next_port += 1
 

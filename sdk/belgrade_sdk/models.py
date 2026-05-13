@@ -42,7 +42,12 @@ class AppUIConfig(BaseModel):
     enabled: bool = False
     bundles: Dict[str, UIBundleDefinition] = {}
 
+class NotificationsConfig(BaseModel):
+    driver: Optional[str] = None
+
 class AppManifest(BaseModel):
     app_id: str
+    name: Optional[str] = None
     ui: Optional[AppUIConfig] = None
     related_apps: List[str] = []
+    notifications: Optional[NotificationsConfig] = None

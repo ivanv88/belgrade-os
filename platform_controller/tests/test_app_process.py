@@ -49,7 +49,8 @@ def test_start_uses_global_driver_when_no_manifest(tmp_path):
 
 
 def test_start_uses_manifest_driver_over_global(tmp_path):
-    """manifest.json notifications.driver overrides the global env var."""
+    """manifest.notifications.driver overrides the global env var."""
+    from main import _AppManifest, _NotificationsManifest
     app = AppProcess(app_id="shopping", path=tmp_path, port=9001)
     captured_env = {}
 
@@ -59,9 +60,11 @@ def test_start_uses_manifest_driver_over_global(tmp_path):
         mock.pid = 1234
         return mock
 
+    fake_manifest = _AppManifest(app_id="shopping", notifications=_NotificationsManifest(driver="firebase"))
+
     with patch("main.subprocess.Popen", side_effect=fake_popen), \
          patch("main.open", MagicMock()), \
-         patch("main.AppProcess._load_manifest", return_value={"notifications": {"driver": "firebase"}}), \
+         patch("main.AppProcess._load_manifest", return_value=fake_manifest), \
          patch.dict(os.environ, {"BEG_OS_NOTIFICATION_DRIVER": "ntfy"}, clear=False):
         import asyncio
         asyncio.run(app.start())
@@ -70,31 +73,63 @@ def test_start_uses_manifest_driver_over_global(tmp_path):
 
 
 def test_load_manifest_reads_json_file(tmp_path):
-    """_load_manifest must parse JSON from manifest.json — requires json to be imported."""
-    import json as _json
-    manifest_data = {"notifications": {"driver": "firebase"}, "version": "1.0"}
-    (tmp_path / "manifest.json").write_text(_json.dumps(manifest_data))
+    """_load_manifest returns a typed _AppManifest for valid JSON."""
+    from main import _AppManifest
+    manifest_data = {"app_id": "shopping", "notifications": {"driver": "firebase"}}
+    (tmp_path / "manifest.json").write_text(json.dumps(manifest_data))
 
     app = AppProcess(app_id="shopping", path=tmp_path, port=9001)
     result = app._load_manifest()
 
-    assert result == manifest_data
-    assert result["notifications"]["driver"] == "firebase"
+    assert isinstance(result, _AppManifest)
+    assert result.app_id == "shopping"
+    assert result.notifications.driver == "firebase"
 
 
-def test_load_manifest_returns_empty_dict_when_absent(tmp_path):
-    """_load_manifest returns {} when manifest.json does not exist."""
+def test_load_manifest_returns_none_when_absent(tmp_path):
+    """_load_manifest returns None when manifest.json does not exist."""
     app = AppProcess(app_id="shopping", path=tmp_path, port=9001)
-    result = app._load_manifest()
-    assert result == {}
+    assert app._load_manifest() is None
 
 
-def test_load_manifest_returns_empty_dict_on_invalid_json(tmp_path):
-    """_load_manifest swallows parse errors and returns {}."""
+def test_load_manifest_raises_on_invalid_json(tmp_path):
+    """_load_manifest raises ValueError on malformed JSON."""
     (tmp_path / "manifest.json").write_text("not valid json {{{")
     app = AppProcess(app_id="shopping", path=tmp_path, port=9001)
-    result = app._load_manifest()
-    assert result == {}
+    with pytest.raises(ValueError, match="not valid JSON"):
+        app._load_manifest()
+
+
+def test_load_manifest_raises_on_schema_violation(tmp_path):
+    """_load_manifest raises ValueError when JSON is valid but schema is wrong."""
+    # app_id is required — omitting it should fail validation
+    (tmp_path / "manifest.json").write_text(json.dumps({"name": "Oops, no app_id"}))
+    app = AppProcess(app_id="shopping", path=tmp_path, port=9001)
+    with pytest.raises(ValueError, match="failed schema validation"):
+        app._load_manifest()
+
+
+def test_start_raises_on_invalid_manifest(tmp_path):
+    """AppProcess.start() propagates ValueError from _load_manifest."""
+    (tmp_path / "manifest.json").write_text("{{broken json")
+    app = AppProcess(app_id="badapp", path=tmp_path, port=9002)
+    with pytest.raises(ValueError):
+        asyncio.run(app.start())
+
+
+def test_start_app_skips_app_on_invalid_manifest(tmp_path):
+    """AppSupervisor.start_app() skips an app whose manifest fails validation."""
+    from main import AppSupervisor
+    sup = AppSupervisor(apps_root=tmp_path)
+
+    app_dir = tmp_path / "badapp"
+    app_dir.mkdir()
+    (app_dir / "main.py").write_text("# stub")
+    (app_dir / "manifest.json").write_text("{{broken json")
+
+    asyncio.run(sup.start_app("badapp"))
+
+    assert "badapp" not in sup.running_apps
 
 
 def test_watchdog_restarts_dead_app(tmp_path):
