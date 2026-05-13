@@ -19,29 +19,14 @@ App tool handler
 
 ## Schedule Scoping
 
-Schedules are scoped per-app via `manifest.json`, following the same pattern as the notification driver. The app declares once; the SDK is transparent at call sites.
+Follows the same pattern as every other inter-service message in the system (`Task`, `ToolCall`, `NotificationRequest`): `user_id` and `tenant_id` are fields in the payload, never encoded in the ID.
 
-```json
-{ "app_id": "shopping", "scheduling": { "scope": "user" } }
-```
+- `schedule_id` = `"{app_id}:{name}"` always — simple, stable, predictable
+- `user_id` and `tenant_id` are stored as fields on `ScheduleEntry` and in `shared.schedules`
+- DB primary key becomes `(app_id, name, user_id)` — two users can hold the same named schedule for the same app without collision
+- When a job fires, `user_id` and `tenant_id` are passed in the tool call payload so the tool runs in the correct user context
 
-| Value | `schedule_id` format | Use case |
-|---|---|---|
-| `"user"` (default) | `"{app_id}:{user_id}:{name}"` | Per-user recurring actions |
-| `"app"` | `"{app_id}:{name}"` | App-level housekeeping jobs |
-
-Platform Controller reads `manifest.scheduling.scope` at app startup and injects it as `BEG_OS_SCHEDULE_SCOPE` env var, exactly as it does for `BEG_OS_NOTIFICATION_DRIVER`. The SDK reads `BEG_OS_SCHEDULE_SCOPE` (default: `"user"`) from the environment when constructing the `schedule_id`.
-
-Both `_AppManifest` (Platform Controller) and `AppManifest` (SDK `models.py`) gain:
-
-```python
-class _SchedulingManifest(BaseModel):
-    scope: str = "user"   # "user" | "app"
-
-class _AppManifest(BaseModel):
-    ...
-    scheduling: Optional[_SchedulingManifest] = None
-```
+No manifest `scheduling.scope`, no env var injection, no string encoding. Scoping is in the data.
 
 ## Proto Contract
 
@@ -54,7 +39,7 @@ message ScheduleOp {
     DELETE = 1;
   }
   OpType op = 1;
-  string schedule_id = 2;   // "{app_id}:{user_id}:{name}" or "{app_id}:{name}" per scope
+  string schedule_id = 2;   // "{app_id}:{name}" — e.g. "shopping:daily-summary"
   string app_id = 3;
   string user_id = 4;
   string tenant_id = 5;
@@ -74,35 +59,41 @@ await ctx.schedule("daily-summary", "0 9 * * *", "shopping:summarize", params={"
 await ctx.unschedule("daily-summary")
 ```
 
-- `schedule(name, cron, tool_name, params={})` — builds a `ScheduleOp(op=UPSERT)` and XADDs to `tasks:schedule_ops`. The `schedule_id` is computed from `BEG_OS_SCHEDULE_SCOPE`: `"{app_id}:{user_id}:{name}"` for `"user"` scope, `"{app_id}:{name}"` for `"app"` scope. `app_id`, `user_id`, `tenant_id`, and `trace_id` are injected from context.
-- `unschedule(name)` — builds a `ScheduleOp(op=DELETE)` with the same `schedule_id` derivation and XADDs to `tasks:schedule_ops`.
+- `schedule(name, cron, tool_name, params={})` — builds a `ScheduleOp(op=UPSERT)` and XADDs to `tasks:schedule_ops`. `schedule_id` = `f"{app_id}:{name}"`. `app_id`, `user_id`, `tenant_id`, and `trace_id` are injected from context.
+- `unschedule(name)` — builds a `ScheduleOp(op=DELETE)` with `schedule_id = f"{app_id}:{name}"` and XADDs to `tasks:schedule_ops`.
 - Both raise `RuntimeError` if `_redis_pool` is not initialized.
 - Methods live directly on `AppContext` (not behind a sub-adapter).
 
 ## Model Update
 
-`ScheduleEntry` in `platform_controller/scheduler.py` gets a new field:
+`ScheduleEntry` in `platform_controller/scheduler.py` gains `app_id` and `name` fields, and the primary key becomes the composite `(app_id, name, user_id)`:
 
 ```python
 class ScheduleEntry(BaseModel):
-    id: str
+    id: str           # "{app_id}:{name}" — APScheduler job id
+    app_id: str = ""  # new
+    name: str = ""    # new — the short name the app used
     user_id: str
     tenant_id: str
     cron: str
     tool_name: str
     params: Dict = {}
-    app_id: str = ""   # new — scopes schedule to originating app
 ```
 
 ## Database Migration
 
-`shared.schedules` gets a new column:
+`shared.schedules` is updated at Platform Controller startup:
 
 ```sql
 ALTER TABLE shared.schedules ADD COLUMN IF NOT EXISTS app_id TEXT NOT NULL DEFAULT '';
+ALTER TABLE shared.schedules ADD COLUMN IF NOT EXISTS name TEXT NOT NULL DEFAULT '';
+
+-- New composite primary key — drop old single-column PK first
+ALTER TABLE shared.schedules DROP CONSTRAINT IF EXISTS schedules_pkey;
+ALTER TABLE shared.schedules ADD PRIMARY KEY (app_id, name, user_id);
 ```
 
-Run at Platform Controller startup alongside the existing `CREATE TABLE IF NOT EXISTS` block.
+Existing REST-managed schedules (created before this change) have `app_id = ''` and `name = ''`, which is a valid composite key as long as their `user_id` differs. They continue to work unchanged.
 
 ## Platform Controller Consumer
 
@@ -110,8 +101,8 @@ New `_schedule_ops_consumer_loop(redis_url)` in `platform_controller/main.py`:
 
 - Stream: `tasks:schedule_ops`, group: `schedule-ops-runners`, consumer: `platform-controller`
 - Started as `asyncio.create_task()` in `startup_event`, same as the untrusted consumer.
-- On `UPSERT`: builds a `ScheduleEntry` from the op fields, calls `scheduler_manager.add_schedule(entry)`, persists to `shared.schedules` (upsert by `id`).
-- On `DELETE`: calls `scheduler_manager.remove_schedule(schedule_id)`, deletes from `shared.schedules WHERE id = :id`.
+- On `UPSERT`: builds a `ScheduleEntry` from the op fields, calls `scheduler_manager.add_schedule(entry)`, persists to `shared.schedules` (upsert on `(app_id, name, user_id)`).
+- On `DELETE`: calls `scheduler_manager.remove_schedule(schedule_id)`, deletes from `shared.schedules WHERE id = :id AND user_id = :user_id`.
 - Invalid `app_id` (fails `_APP_ID_RE`) → log error, ACK, discard.
 - Reconnects on Redis `ConnectionError` with 5s backoff.
 
@@ -122,7 +113,8 @@ Extending the existing `/schedules` routes in Platform Controller:
 | Method | Path | Purpose |
 |---|---|---|
 | `GET` | `/schedules` | List all schedules (existing) |
-| `GET` | `/schedules?app_id={app_id}` | Filter schedules by app |
+| `GET` | `/schedules?app_id={app_id}` | Filter by app |
+| `GET` | `/schedules?app_id={app_id}&user_id={user_id}` | Filter by app + user |
 | `DELETE` | `/schedules/{schedule_id}` | Cancel one schedule (existing) |
 | `DELETE` | `/apps/{app_id}/schedules` | Cancel all schedules for an app |
 
@@ -133,7 +125,7 @@ Extending the existing `/schedules` routes in Platform Controller:
 4. Protected by `_require_token`
 5. Returns `{"cancelled": N, "app_id": app_id}`
 
-`GET /schedules?app_id` adds an optional query param to the existing handler; if absent, returns all (existing behaviour preserved).
+`GET /schedules` adds optional `app_id` and `user_id` query params; if absent, returns all (existing behaviour preserved).
 
 ## Error Handling
 
@@ -143,11 +135,10 @@ Extending the existing `/schedules` routes in Platform Controller:
 
 ## Testing
 
-- SDK: unit tests for `ctx.schedule()` and `ctx.unschedule()` — assert proto fields and stream write, mock `_redis_pool`; test both `"user"` and `"app"` scope produce correct `schedule_id`
-- Platform Controller: test `AppProcess.start()` injects `BEG_OS_SCHEDULE_SCOPE` from manifest, falls back to `"user"` when absent
-- Platform Controller: unit tests for the consumer logic — UPSERT calls `add_schedule`, DELETE calls `remove_schedule`, invalid `app_id` is discarded
+- SDK: unit tests for `ctx.schedule()` and `ctx.unschedule()` — assert proto fields and stream write, mock `_redis_pool`
+- Platform Controller: unit tests for the consumer — UPSERT calls `add_schedule`, DELETE calls `remove_schedule`, invalid `app_id` is discarded
 - Platform Controller: test `DELETE /apps/{app_id}/schedules` — removes all matching schedules, returns correct count
-- Platform Controller: test `GET /schedules?app_id` filter
+- Platform Controller: test `GET /schedules?app_id` and `GET /schedules?app_id&user_id` filters
 
 ## Out of Scope
 
