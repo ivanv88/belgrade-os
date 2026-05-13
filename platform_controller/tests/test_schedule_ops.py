@@ -99,5 +99,6 @@ async def test_process_schedule_op_empty_app_id_discards():
 
 @pytest.mark.asyncio
 async def test_process_schedule_op_malformed_proto_raises():
-    with pytest.raises(Exception):
+    from google.protobuf.message import DecodeError
+    with pytest.raises(DecodeError):
         await ctrl_main._process_schedule_op(b"not a proto")

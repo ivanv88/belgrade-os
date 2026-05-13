@@ -267,6 +267,9 @@ async def _process_schedule_op(data: bytes) -> None:
         return
 
     if op.op == belgrade_os_pb2.ScheduleOp.UPSERT:
+        if not op.schedule_id or not op.cron or not op.tool_name:
+            logger.error("malformed UPSERT ScheduleOp — missing schedule_id/cron/tool_name, discarding id=%r", op.schedule_id)
+            return
         entry = ScheduleEntry(
             id=op.schedule_id,
             app_id=op.app_id,
@@ -281,9 +284,12 @@ async def _process_schedule_op(data: bytes) -> None:
                 INSERT INTO shared.schedules (id, app_id, user_id, tenant_id, cron, tool_name, params, updated_at)
                 VALUES (:id, :app_id, :user_id, :tenant_id, :cron, :tool_name, :params, NOW())
                 ON CONFLICT (id) DO UPDATE SET
-                    cron = EXCLUDED.cron,
-                    tool_name = EXCLUDED.tool_name,
-                    params = EXCLUDED.params,
+                    app_id     = EXCLUDED.app_id,
+                    user_id    = EXCLUDED.user_id,
+                    tenant_id  = EXCLUDED.tenant_id,
+                    cron       = EXCLUDED.cron,
+                    tool_name  = EXCLUDED.tool_name,
+                    params     = EXCLUDED.params,
                     updated_at = NOW()
             """), entry.model_dump())
             await session.commit()
@@ -291,6 +297,9 @@ async def _process_schedule_op(data: bytes) -> None:
         logger.info("schedule upserted id=%s tool=%s cron=%s", op.schedule_id, op.tool_name, op.cron)
 
     elif op.op == belgrade_os_pb2.ScheduleOp.DELETE:
+        if not op.schedule_id:
+            logger.error("malformed DELETE ScheduleOp — empty schedule_id, discarding")
+            return
         async with SessionLocal() as session:
             await session.execute(
                 text("DELETE FROM shared.schedules WHERE id = :id"),
