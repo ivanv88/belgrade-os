@@ -89,7 +89,7 @@ class AppProcess:
         if not manifest_path.exists():
             return None
         try:
-            data = json.loads(manifest_path.read_text())
+            data = json.loads(manifest_path.read_text(encoding="utf-8"))
         except json.JSONDecodeError as exc:
             raise ValueError(
                 f"manifest.json for app '{self.app_id}' is not valid JSON: {exc}"

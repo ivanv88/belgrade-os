@@ -113,7 +113,7 @@ def test_start_raises_on_invalid_manifest(tmp_path):
     """AppProcess.start() propagates ValueError from _load_manifest."""
     (tmp_path / "manifest.json").write_text("{{broken json")
     app = AppProcess(app_id="badapp", path=tmp_path, port=9002)
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match="not valid JSON"):
         asyncio.run(app.start())
 
 
