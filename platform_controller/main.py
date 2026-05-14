@@ -528,6 +528,11 @@ async def list_schedules(app_id: Optional[str] = None, user_id: Optional[str] = 
                 text("SELECT id, app_id, user_id, tenant_id, cron, tool_name, params FROM shared.schedules WHERE app_id = :app_id"),
                 {"app_id": app_id},
             )
+        elif user_id:
+            result = await session.execute(
+                text("SELECT id, app_id, user_id, tenant_id, cron, tool_name, params FROM shared.schedules WHERE user_id = :user_id"),
+                {"user_id": user_id},
+            )
         else:
             result = await session.execute(
                 text("SELECT id, app_id, user_id, tenant_id, cron, tool_name, params FROM shared.schedules")
