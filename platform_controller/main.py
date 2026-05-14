@@ -280,6 +280,14 @@ async def _process_schedule_op(data: bytes) -> None:
             tool_name=op.tool_name,
             params=json.loads(op.params_json) if op.params_json else {},
         )
+        # Validate cron before persisting — an invalid cron would cause add_schedule()
+        # to raise after the DB commit, leaving a bad row that wedges the consumer on restart.
+        try:
+            from apscheduler.triggers.cron import CronTrigger
+            CronTrigger.from_crontab(entry.cron)
+        except ValueError:
+            logger.error("invalid cron %r in ScheduleOp id=%r — discarding", op.cron, op.schedule_id)
+            return
         async with SessionLocal() as session:
             await session.execute(text("""
                 INSERT INTO shared.schedules (id, app_id, user_id, tenant_id, cron, tool_name, params, updated_at)

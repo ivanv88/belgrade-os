@@ -104,6 +104,18 @@ async def test_process_schedule_op_malformed_proto_raises():
         await ctrl_main._process_schedule_op(b"not a proto")
 
 
+@pytest.mark.asyncio
+async def test_process_schedule_op_invalid_cron_discards():
+    mock_scheduler = MagicMock()
+
+    with patch.object(ctrl_main, "scheduler_manager", mock_scheduler):
+        await ctrl_main._process_schedule_op(
+            _build_schedule_op("UPSERT", cron="not a cron")
+        )
+
+    mock_scheduler.add_schedule.assert_not_called()
+
+
 from fastapi.testclient import TestClient
 
 
@@ -172,6 +184,38 @@ async def test_list_schedules_filter_by_user_id():
     assert resp.status_code == 200
     data = resp.json()
     assert len(data) == 1
+    assert data[0]["user_id"] == "u1"
+
+
+@pytest.mark.asyncio
+async def test_list_schedules_filter_by_app_id_and_user_id():
+    mock_session_cm = AsyncMock()
+    mock_session = AsyncMock()
+    mock_session_cm.__aenter__ = AsyncMock(return_value=mock_session)
+    mock_session_cm.__aexit__ = AsyncMock(return_value=False)
+
+    mock_row = MagicMock()
+    mock_row._mapping = {
+        "id": "shopping:u1:daily-summary",
+        "app_id": "shopping",
+        "user_id": "u1",
+        "tenant_id": "t1",
+        "cron": "0 9 * * *",
+        "tool_name": "shopping:summarize",
+        "params": {},
+    }
+    mock_result = MagicMock()
+    mock_result.all.return_value = [mock_row]
+    mock_session.execute = AsyncMock(return_value=mock_result)
+
+    with patch.object(ctrl_main, "SessionLocal", return_value=mock_session_cm):
+        client = _make_test_client()
+        resp = client.get("/schedules?app_id=shopping&user_id=u1")
+
+    assert resp.status_code == 200
+    data = resp.json()
+    assert len(data) == 1
+    assert data[0]["app_id"] == "shopping"
     assert data[0]["user_id"] == "u1"
 
 
