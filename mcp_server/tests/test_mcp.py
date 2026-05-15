@@ -1,8 +1,9 @@
 from __future__ import annotations
+import json
 import os
 import sys
 import pytest
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 from fastapi.testclient import TestClient
 
 
@@ -91,10 +92,6 @@ def test_mcp_unauthenticated_returns_401(mcp_client):
         json={"jsonrpc": "2.0", "method": "initialize", "id": 1},
     )
     assert resp.status_code == 401
-
-
-import json
-from unittest.mock import AsyncMock, patch
 
 
 def test_mcp_initialize_returns_capabilities(mcp_client):

@@ -23,7 +23,7 @@ async def _require_auth(
         raise HTTPException(status_code=401, detail="missing token")
     try:
         return oauth.validate_token(credentials.credentials)
-    except _jwt.PyJWTError:
+    except (_jwt.PyJWTError, ValueError):
         raise HTTPException(status_code=401, detail="invalid token")
 
 
@@ -75,19 +75,20 @@ async def mcp_handler(
     if method == "tools/list":
         try:
             tools = await registry.list_mcp_tools()
+            mcp_tools = []
+            for t in tools:
+                description = t["description"].rstrip(".")
+                if t.get("mcp_hint"):
+                    description = f"{description}. {t['mcp_hint'].rstrip('.')}."
+                else:
+                    description += "."
+                mcp_tools.append({
+                    "name": t["name"],
+                    "description": description,
+                    "inputSchema": json.loads(t["input_schema_json"]),
+                })
         except Exception as exc:
             return err(-32603, f"bridge unavailable: {exc}")
-        mcp_tools = []
-        for t in tools:
-            description = t["description"]
-            if t.get("mcp_hint"):
-                description = f"{description}. {t['mcp_hint']}".rstrip(".")
-                description += "."
-            mcp_tools.append({
-                "name": t["name"],
-                "description": description,
-                "inputSchema": json.loads(t["input_schema_json"]),
-            })
         return ok({"tools": mcp_tools})
 
     if method == "tools/call":
