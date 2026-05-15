@@ -1,13 +1,14 @@
 from __future__ import annotations
 import os
 import pytest
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 from belgrade_sdk.app import BelgradeApp
 from belgrade_sdk.models import RegisterRequest, ToolDefinition
 
 
 def test_mcp_flag_false_by_default():
-    app = BelgradeApp(app_id="shopping", bridge_url="http://bridge:8081")
+    with patch.dict(os.environ, {"BEG_OS_MCP_ENABLED": ""}):
+        app = BelgradeApp(app_id="shopping", bridge_url="http://bridge:8081")
     assert app._mcp_enabled is False
 
 
@@ -54,3 +55,21 @@ def test_no_mcp_hint_is_none():
 
     defn = app.tool_definitions[0]
     assert defn.mcp_hint is None
+
+
+@pytest.mark.asyncio
+async def test_register_with_bridge_sends_mcp_flag():
+    with patch.dict(os.environ, {"BEG_OS_MCP_ENABLED": "true"}):
+        app = BelgradeApp(app_id="shopping", bridge_url="http://bridge:8081")
+
+    @app.tool("add-item", description="Add item")
+    def add_item(ctx, item: str):
+        pass
+
+    mock_response = AsyncMock()
+    mock_response.raise_for_status = MagicMock()
+
+    with patch("httpx.AsyncClient.post", return_value=mock_response) as mock_post:
+        await app.register_with_bridge()
+        _, kwargs = mock_post.call_args
+        assert kwargs["json"]["mcp"] is True
