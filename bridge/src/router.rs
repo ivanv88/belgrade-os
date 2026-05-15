@@ -41,8 +41,8 @@ pub struct ToolResponse {
 }
 
 #[derive(Deserialize)]
-pub struct ToolsQuery {
-    pub mcp: Option<bool>,
+struct ToolsQuery {
+    mcp: Option<bool>,
 }
 
 #[derive(Deserialize)]
@@ -1513,6 +1513,36 @@ mod tests {
 
         let resp = make_router(Arc::clone(&registry))
             .oneshot(Request::builder().uri("/v1/tools").body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        let body = resp.into_body().collect().await.unwrap().to_bytes();
+        let tools: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(tools.as_array().unwrap().len(), 1);
+    }
+
+    #[tokio::test]
+    async fn test_mcp_filter_false_returns_all_tools() {
+        let registry = Arc::new(ToolRegistry::new());
+        let register_body = serde_json::json!({
+            "app_id": "shopping",
+            "callback_url": "http://app:8000",
+            "tools": [{"name": "shopping:add_item", "description": "Add item", "input_schema_json": "{}"}],
+            "mcp": false
+        });
+        make_router(Arc::clone(&registry))
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/v1/register")
+                    .header("content-type", "application/json")
+                    .body(Body::from(register_body.to_string()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        let resp = make_router(Arc::clone(&registry))
+            .oneshot(Request::builder().uri("/v1/tools?mcp=false").body(Body::empty()).unwrap())
             .await
             .unwrap();
         let body = resp.into_body().collect().await.unwrap().to_bytes();

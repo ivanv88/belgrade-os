@@ -115,7 +115,9 @@ impl ToolRegistry {
 
     pub fn list_mcp(&self) -> Vec<RegisteredTool> {
         let map = self.tools.read().expect("lock poisoned");
-        map.values().filter(|t| t.mcp).cloned().collect()
+        let mut tools: Vec<RegisteredTool> = map.values().filter(|t| t.mcp).cloned().collect();
+        tools.sort_by(|a, b| a.name.cmp(&b.name));
+        tools
     }
 
     pub fn get_callback(&self, app_id: &str) -> Option<String> {

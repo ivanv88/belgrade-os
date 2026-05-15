@@ -490,6 +490,29 @@ mod tests {
         );
     }
 
+    #[tokio::test]
+    async fn test_redis_register_persists_mcp_fields() {
+        let Some(pool) = try_pool().await else { return; };
+        let store = RedisStore::new_for_test(pool);
+
+        store.register(
+            "shopping",
+            "http://app:8000",
+            &[ToolRegistration {
+                name: "shopping:tool".to_string(),
+                description: "desc".to_string(),
+                input_schema_json: "{}".to_string(),
+                mcp: true,
+                mcp_hint: Some("Use when buying groceries".to_string()),
+            }],
+        ).await.unwrap();
+
+        let state = store.hydrate().await.unwrap();
+        assert_eq!(state.tools.len(), 1);
+        assert_eq!(state.tools[0].mcp, true);
+        assert_eq!(state.tools[0].mcp_hint, Some("Use when buying groceries".to_string()));
+    }
+
     // ── hydrate ──────────────────────────────────────────────────────────────
 
     #[tokio::test]
