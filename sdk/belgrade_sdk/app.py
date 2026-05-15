@@ -18,17 +18,18 @@ logger = logging.getLogger(__name__)
 
 
 class BelgradeApp:
-    def __init__(self, app_id: str):
+    def __init__(self, app_id: str, bridge_url: Optional[str] = None):
         self.app_id = app_id
         self.tools: Dict[str, Callable] = {}
         self.tool_definitions: List[ToolDefinition] = []
         self.event_handlers: Dict[str, List[Callable]] = {}
 
-        self.bridge_url = defaults.BRIDGE_URL
+        self.bridge_url = bridge_url if bridge_url is not None else defaults.BRIDGE_URL
         self.db_url = defaults.DB_URL
         self.callback_url = defaults.CALLBACK_URL
         self.redis_url = defaults.REDIS_URL
         self.notification_driver = os.getenv("BEG_OS_NOTIFICATION_DRIVER", defaults.DEFAULT_NOTIFICATION_DRIVER)
+        self._mcp_enabled: bool = os.getenv("BEG_OS_MCP_ENABLED") == "true"
 
         # Initialized during on_startup — None until then.
         self._db_engine: Optional[AsyncEngine] = None
@@ -37,7 +38,7 @@ class BelgradeApp:
         self.app = FastAPI(title=f"Belgrade App: {app_id}")
         self._setup_routes()
 
-    def tool(self, name: str, description: str):
+    def tool(self, name: str, description: str, mcp_hint: Optional[str] = None):
         """Decorator to register a tool."""
         def decorator(func: Callable):
             sig = inspect.signature(func)
@@ -53,6 +54,7 @@ class BelgradeApp:
                 name=full_name,
                 description=description,
                 input_schema_json=json.dumps(schema),
+                mcp_hint=mcp_hint,
             ))
             return func
         return decorator
@@ -139,6 +141,7 @@ class BelgradeApp:
             callback_url=self.callback_url,
             tools=self.tool_definitions,
             subscriptions=list(self.event_handlers.keys()),
+            mcp=self._mcp_enabled,
         )
         async with httpx.AsyncClient() as client:
             try:

@@ -6,12 +6,14 @@ class ToolDefinition(BaseModel):
     name: str
     description: str
     input_schema_json: str
+    mcp_hint: Optional[str] = None
 
 class RegisterRequest(BaseModel):
     app_id: str
     callback_url: str
     tools: List[ToolDefinition]
     subscriptions: Optional[List[str]] = None
+    mcp: bool = False
 
 class EventPayload(BaseModel):
     topic: str
