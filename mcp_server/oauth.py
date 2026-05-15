@@ -29,6 +29,8 @@ def _get_jwks_client() -> PyJWKClient:
 def validate_cf_jwt(token: str) -> dict:
     """Validate a Cloudflare Access JWT. Raises on invalid token."""
     audience = os.getenv("CF_MCP_AUDIENCE", "")
+    if not audience:
+        raise ValueError("CF_MCP_AUDIENCE is required")
     client = _get_jwks_client()
     signing_key = client.get_signing_key_from_jwt(token)
     return jwt.decode(

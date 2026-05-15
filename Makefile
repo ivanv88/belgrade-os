@@ -69,6 +69,7 @@ test: proto
 	cd inference && python3 -m pytest tests/ -v
 	cd notification && python3 -m pytest tests/ -v
 	cd platform_controller && python3 -m pytest tests/ -v
+	cd mcp_server && python3 -m pytest tests/ -v
 	cd bridge && cargo test
 
 # ─── Dev infrastructure ───────────────────────────────────────────────────────

@@ -305,4 +305,39 @@ mod tests {
         let reg = ToolRegistry::new();
         assert_eq!(reg.get_callback("unknown"), None);
     }
+
+    fn mcp_tool(name: &str) -> ToolRegistration {
+        ToolRegistration {
+            name: name.to_string(),
+            description: "desc".to_string(),
+            input_schema_json: "{}".to_string(),
+            mcp: true,
+            mcp_hint: None,
+        }
+    }
+
+    #[test]
+    fn test_list_mcp_returns_only_mcp_tools() {
+        let reg = ToolRegistry::new();
+        reg.register("app1", "http://app1:8000", &[
+            mcp_tool("app1:exposed"),
+            tool("app1:internal"),
+        ]);
+        let tools = reg.list_mcp();
+        assert_eq!(tools.len(), 1);
+        assert_eq!(tools[0].name, "app1:exposed");
+        assert!(tools[0].mcp);
+    }
+
+    #[test]
+    fn test_list_mcp_is_sorted_by_name() {
+        let reg = ToolRegistry::new();
+        reg.register("app1", "http://app1:8000", &[
+            mcp_tool("app1:z_tool"),
+            mcp_tool("app1:a_tool"),
+        ]);
+        let tools = reg.list_mcp();
+        let names: Vec<&str> = tools.iter().map(|t| t.name.as_str()).collect();
+        assert_eq!(names, vec!["app1:a_tool", "app1:z_tool"]);
+    }
 }
