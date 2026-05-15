@@ -91,3 +91,126 @@ def test_mcp_unauthenticated_returns_401(mcp_client):
         json={"jsonrpc": "2.0", "method": "initialize", "id": 1},
     )
     assert resp.status_code == 401
+
+
+import json
+from unittest.mock import AsyncMock, patch
+
+
+def test_mcp_initialize_returns_capabilities(mcp_client):
+    client, m = mcp_client
+    token = _make_token(client, m)
+    resp = client.post(
+        "/mcp",
+        json={"jsonrpc": "2.0", "method": "initialize", "params": {}, "id": 1},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["result"]["protocolVersion"] == "2024-11-05"
+    assert "tools" in body["result"]["capabilities"]
+
+
+def test_mcp_tools_list_returns_bridge_tools(mcp_client):
+    client, m = mcp_client
+    token = _make_token(client, m)
+
+    bridge_tools = [
+        {
+            "name": "shopping:add-item",
+            "description": "Add item to list",
+            "input_schema_json": json.dumps({"type": "object", "properties": {"item": {"type": "string"}}}),
+            "app_id": "shopping",
+            "mcp_hint": "Use when buying groceries",
+        }
+    ]
+
+    with patch("registry.list_mcp_tools", new_callable=AsyncMock, return_value=bridge_tools):
+        resp = client.post(
+            "/mcp",
+            json={"jsonrpc": "2.0", "method": "tools/list", "params": {}, "id": 2},
+            headers={"Authorization": f"Bearer {token}"},
+        )
+    assert resp.status_code == 200
+    tools = resp.json()["result"]["tools"]
+    assert len(tools) == 1
+    assert tools[0]["name"] == "shopping:add-item"
+    assert tools[0]["description"] == "Add item to list. Use when buying groceries."
+    assert tools[0]["inputSchema"] == {"type": "object", "properties": {"item": {"type": "string"}}}
+
+
+def test_mcp_tools_call_routes_to_bridge(mcp_client):
+    client, m = mcp_client
+    token = _make_token(client, m)
+
+    bridge_tools = [
+        {
+            "name": "shopping:add-item",
+            "description": "Add item",
+            "input_schema_json": "{}",
+            "app_id": "shopping",
+            "mcp_hint": None,
+        }
+    ]
+    bridge_result = {"success": True, "output_json": json.dumps({"added": "milk"}), "error": ""}
+
+    with patch("registry.list_mcp_tools", new_callable=AsyncMock, return_value=bridge_tools), \
+         patch("registry.call_tool", new_callable=AsyncMock, return_value=bridge_result) as mock_call:
+        resp = client.post(
+            "/mcp",
+            json={
+                "jsonrpc": "2.0",
+                "method": "tools/call",
+                "params": {"name": "shopping:add-item", "arguments": {"item": "milk"}},
+                "id": 3,
+            },
+            headers={"Authorization": f"Bearer {token}"},
+        )
+
+    assert resp.status_code == 200
+    content = resp.json()["result"]["content"]
+    assert content[0]["type"] == "text"
+    assert "milk" in content[0]["text"]
+
+    mock_call.assert_called_once_with(
+        "shopping:add-item",
+        {"item": "milk"},
+        "ivan",
+        "default",
+    )
+
+
+def test_mcp_tools_call_unknown_tool_returns_error(mcp_client):
+    client, m = mcp_client
+    token = _make_token(client, m)
+
+    with patch("registry.list_mcp_tools", new_callable=AsyncMock, return_value=[]):
+        resp = client.post(
+            "/mcp",
+            json={
+                "jsonrpc": "2.0",
+                "method": "tools/call",
+                "params": {"name": "shopping:unknown", "arguments": {}},
+                "id": 4,
+            },
+            headers={"Authorization": f"Bearer {token}"},
+        )
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert "error" in body
+    assert body["error"]["code"] == -32602
+
+
+def test_mcp_unknown_method_returns_error(mcp_client):
+    client, m = mcp_client
+    token = _make_token(client, m)
+    resp = client.post(
+        "/mcp",
+        json={"jsonrpc": "2.0", "method": "unknown/method", "id": 5},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert "error" in body
+    assert body["error"]["code"] == -32601

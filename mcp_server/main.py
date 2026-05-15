@@ -1,10 +1,12 @@
 from __future__ import annotations
+import json
 import os
 from typing import Optional
 import jwt as _jwt
 from fastapi import FastAPI, HTTPException, Request, Depends
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 import oauth
+import registry
 
 app = FastAPI(title="Belgrade OS MCP Server")
 
@@ -52,8 +54,67 @@ async def mcp_handler(
     request: Request,
     claims: dict = Depends(_require_auth),
 ):
-    # Placeholder — MCP protocol implemented in Task 5
-    return {"jsonrpc": "2.0", "result": {}, "id": None}
+    body = await request.json()
+    method = body.get("method", "")
+    params = body.get("params") or {}
+    req_id = body.get("id")
+
+    def ok(result: dict) -> dict:
+        return {"jsonrpc": "2.0", "result": result, "id": req_id}
+
+    def err(code: int, message: str) -> dict:
+        return {"jsonrpc": "2.0", "error": {"code": code, "message": message}, "id": req_id}
+
+    if method == "initialize":
+        return ok({
+            "protocolVersion": "2024-11-05",
+            "capabilities": {"tools": {}},
+            "serverInfo": {"name": "belgrade-os", "version": "1.0.0"},
+        })
+
+    if method == "tools/list":
+        try:
+            tools = await registry.list_mcp_tools()
+        except Exception as exc:
+            return err(-32603, f"bridge unavailable: {exc}")
+        mcp_tools = []
+        for t in tools:
+            description = t["description"]
+            if t.get("mcp_hint"):
+                description = f"{description}. {t['mcp_hint']}".rstrip(".")
+                description += "."
+            mcp_tools.append({
+                "name": t["name"],
+                "description": description,
+                "inputSchema": json.loads(t["input_schema_json"]),
+            })
+        return ok({"tools": mcp_tools})
+
+    if method == "tools/call":
+        tool_name = params.get("name", "")
+        arguments = params.get("arguments") or {}
+        try:
+            mcp_tools = await registry.list_mcp_tools()
+        except Exception as exc:
+            return err(-32603, f"bridge unavailable: {exc}")
+        exposed_names = {t["name"] for t in mcp_tools}
+        if tool_name not in exposed_names:
+            return err(-32602, f"tool not found: {tool_name}")
+        try:
+            result = await registry.call_tool(
+                tool_name,
+                arguments,
+                claims.get("user_id", _MCP_DEFAULT_USER_ID),
+                claims.get("tenant_id", _MCP_DEFAULT_TENANT_ID),
+            )
+        except Exception as exc:
+            return err(-32603, f"tool execution failed: {exc}")
+        if not result.get("success"):
+            return err(-32603, result.get("error", "tool execution failed"))
+        output = result.get("output_json", "{}")
+        return ok({"content": [{"type": "text", "text": output}]})
+
+    return err(-32601, f"method not found: {method}")
 
 
 if __name__ == "__main__":
