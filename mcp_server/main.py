@@ -1,6 +1,7 @@
 from __future__ import annotations
 import os
 from typing import Optional
+import jwt as _jwt
 from fastapi import FastAPI, HTTPException, Request, Depends
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 import oauth
@@ -20,7 +21,7 @@ async def _require_auth(
         raise HTTPException(status_code=401, detail="missing token")
     try:
         return oauth.validate_token(credentials.credentials)
-    except Exception:
+    except _jwt.PyJWTError:
         raise HTTPException(status_code=401, detail="invalid token")
 
 

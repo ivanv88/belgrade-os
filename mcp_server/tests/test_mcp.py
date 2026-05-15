@@ -1,27 +1,31 @@
 from __future__ import annotations
 import os
-import time
 import pytest
 from unittest.mock import patch
 from fastapi.testclient import TestClient
 
 
+_TEST_ENV = {
+    "BRIDGE_URL": "http://localhost:8081",
+    "MCP_JWT_SECRET": "test-secret",
+    "MCP_DEFAULT_USER_ID": "ivan",
+    "MCP_DEFAULT_TENANT_ID": "default",
+    "CF_TEAM_DOMAIN": "beg-os",
+    "CF_MCP_AUDIENCE": "test-audience",
+}
+
+
 def _make_client():
-    with patch.dict(os.environ, {
-        "BRIDGE_URL": "http://localhost:8081",
-        "MCP_JWT_SECRET": "test-secret",
-        "MCP_DEFAULT_USER_ID": "ivan",
-        "MCP_DEFAULT_TENANT_ID": "default",
-        "CF_TEAM_DOMAIN": "beg-os",
-        "CF_MCP_AUDIENCE": "test-audience",
-    }):
-        import importlib
-        import sys
-        for mod in list(sys.modules.keys()):
-            if mod.startswith("main") or mod.startswith("oauth") or mod.startswith("registry"):
-                del sys.modules[mod]
-        import main as m
-        return TestClient(m.app), m
+    # Keep the env patch active for the lifetime of the returned client so that
+    # functions reading env at call time (e.g. _get_jwt_secret) see test values.
+    env_patcher = patch.dict(os.environ, _TEST_ENV)
+    env_patcher.start()
+    import sys
+    for mod in list(sys.modules.keys()):
+        if mod.startswith("main") or mod.startswith("oauth") or mod.startswith("registry"):
+            del sys.modules[mod]
+    import main as m
+    return TestClient(m.app), m
 
 
 def test_token_missing_cf_jwt_returns_401():
