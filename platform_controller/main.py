@@ -120,6 +120,8 @@ class AppProcess:
         env["BEG_OS_NOTIFICATION_DRIVER"] = notification_driver
         if manifest and manifest.mcp:
             env["BEG_OS_MCP_ENABLED"] = "true"
+        else:
+            env.pop("BEG_OS_MCP_ENABLED", None)
 
         cmd = ["python3", str(self.path / "main.py")]
 

@@ -222,7 +222,6 @@ def test_watchdog_does_not_restart_live_app(tmp_path):
 
 def test_start_injects_mcp_enabled_when_manifest_has_mcp_true(tmp_path):
     """BEG_OS_MCP_ENABLED=true injected when manifest has mcp: true."""
-    from main import _AppManifest
     app = AppProcess(app_id="shopping", path=tmp_path, port=9001)
     captured_env = {}
 
@@ -243,7 +242,7 @@ def test_start_injects_mcp_enabled_when_manifest_has_mcp_true(tmp_path):
 
 
 def test_start_does_not_inject_mcp_when_manifest_has_mcp_false(tmp_path):
-    """BEG_OS_MCP_ENABLED not set when manifest has mcp: false."""
+    """BEG_OS_MCP_ENABLED stripped from env even when set in parent env."""
     app = AppProcess(app_id="shopping", path=tmp_path, port=9001)
     captured_env = {}
 
@@ -257,14 +256,15 @@ def test_start_does_not_inject_mcp_when_manifest_has_mcp_false(tmp_path):
         return mock
 
     with patch("main.subprocess.Popen", side_effect=fake_popen), \
-         patch("main.open", MagicMock()):
+         patch("main.open", MagicMock()), \
+         patch.dict(os.environ, {"BEG_OS_MCP_ENABLED": "true"}):
         asyncio.run(app.start())
 
-    assert captured_env.get("BEG_OS_MCP_ENABLED") != "true"
+    assert "BEG_OS_MCP_ENABLED" not in captured_env
 
 
 def test_start_does_not_inject_mcp_when_no_manifest(tmp_path):
-    """BEG_OS_MCP_ENABLED not set when manifest is absent."""
+    """BEG_OS_MCP_ENABLED stripped from env even when set in parent env."""
     app = AppProcess(app_id="shopping", path=tmp_path, port=9001)
     captured_env = {}
 
@@ -275,7 +275,8 @@ def test_start_does_not_inject_mcp_when_no_manifest(tmp_path):
         return mock
 
     with patch("main.subprocess.Popen", side_effect=fake_popen), \
-         patch("main.open", MagicMock()):
+         patch("main.open", MagicMock()), \
+         patch.dict(os.environ, {"BEG_OS_MCP_ENABLED": "true"}):
         asyncio.run(app.start())
 
     assert "BEG_OS_MCP_ENABLED" not in captured_env
