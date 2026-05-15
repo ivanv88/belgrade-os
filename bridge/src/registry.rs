@@ -8,12 +8,16 @@ pub struct RegisteredTool {
     pub input_schema_json: String,
     pub app_id: String,
     pub callback_url: String,
+    pub mcp: bool,
+    pub mcp_hint: Option<String>,
 }
 
 pub struct ToolRegistration {
     pub name: String,
     pub description: String,
     pub input_schema_json: String,
+    pub mcp: bool,
+    pub mcp_hint: Option<String>,
 }
 
 pub struct ToolRegistry {
@@ -58,6 +62,8 @@ impl ToolRegistry {
                 input_schema_json: t.input_schema_json.clone(),
                 app_id: app_id.to_string(),
                 callback_url: callback_url.to_string(),
+                mcp: t.mcp,
+                mcp_hint: t.mcp_hint.clone(),
             });
         }
     }
@@ -105,6 +111,11 @@ impl ToolRegistry {
         let mut tools: Vec<RegisteredTool> = self.tools.read().expect("lock poisoned").values().cloned().collect();
         tools.sort_by(|a, b| a.name.cmp(&b.name));
         tools
+    }
+
+    pub fn list_mcp(&self) -> Vec<RegisteredTool> {
+        let map = self.tools.read().expect("lock poisoned");
+        map.values().filter(|t| t.mcp).cloned().collect()
     }
 
     pub fn get_callback(&self, app_id: &str) -> Option<String> {
@@ -163,6 +174,8 @@ mod tests {
             name: name.to_string(),
             description: "desc".to_string(),
             input_schema_json: "{}".to_string(),
+            mcp: false,
+            mcp_hint: None,
         }
     }
 
@@ -254,6 +267,8 @@ mod tests {
             name: "add_item".to_string(), // missing "shopping:" prefix
             description: "".to_string(),
             input_schema_json: "{}".to_string(),
+            mcp: false,
+            mcp_hint: None,
         }]);
     }
 

@@ -137,6 +137,8 @@ impl Store for RedisStore {
                 input_schema_json: t.input_schema_json.clone(),
                 app_id: app_id.to_string(),
                 callback_url: callback_url.to_string(),
+                mcp: t.mcp,
+                mcp_hint: t.mcp_hint.clone(),
             };
             pipe.hset(self.tools_key(), &t.name, serde_json::to_string(&tool)?).ignore();
             pipe.sadd(&app_tools_key, &t.name).ignore();
@@ -285,6 +287,8 @@ mod tests {
             name: name.to_string(),
             description: "desc".to_string(),
             input_schema_json: "{}".to_string(),
+            mcp: false,
+            mcp_hint: None,
         }
     }
 

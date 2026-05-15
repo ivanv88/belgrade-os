@@ -1,4 +1,4 @@
-use axum::{extract::State, http::StatusCode, response::{IntoResponse, Json}, routing::{get, post}, Router};
+use axum::{extract::{Query, State}, http::StatusCode, response::{IntoResponse, Json}, routing::{get, post}, Router};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use crate::{config::Config, registry::{ToolRegistration, ToolRegistry}};
@@ -20,6 +20,7 @@ pub struct RegisterRequest {
     pub callback_url: String,
     pub tools: Vec<ToolDef>,
     pub subscriptions: Option<Vec<String>>,
+    pub mcp: Option<bool>,
 }
 
 #[derive(Deserialize)]
@@ -27,6 +28,7 @@ pub struct ToolDef {
     pub name: String,
     pub description: String,
     pub input_schema_json: String,
+    pub mcp_hint: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -35,6 +37,12 @@ pub struct ToolResponse {
     pub description: String,
     pub input_schema_json: String,
     pub app_id: String,
+    pub mcp_hint: Option<String>,
+}
+
+#[derive(Deserialize)]
+pub struct ToolsQuery {
+    pub mcp: Option<bool>,
 }
 
 #[derive(Deserialize)]
@@ -278,6 +286,7 @@ async fn handle_register(
             ),
         ));
     }
+    let mcp = req.mcp.unwrap_or(false);
     let registrations: Vec<ToolRegistration> = req
         .tools
         .iter()
@@ -285,6 +294,8 @@ async fn handle_register(
             name: t.name.clone(),
             description: t.description.clone(),
             input_schema_json: t.input_schema_json.clone(),
+            mcp,
+            mcp_hint: t.mcp_hint.clone(),
         })
         .collect();
 
@@ -365,19 +376,24 @@ async fn handle_publish(
 
 async fn handle_tools(
     State(state): State<AppState>,
+    Query(params): Query<ToolsQuery>,
 ) -> Json<Vec<ToolResponse>> {
-    let tools = state
-        .registry
-        .list()
+    let tools = if params.mcp == Some(true) {
+        state.registry.list_mcp()
+    } else {
+        state.registry.list()
+    };
+    let response = tools
         .into_iter()
         .map(|t| ToolResponse {
             name: t.name,
             description: t.description,
             input_schema_json: t.input_schema_json,
             app_id: t.app_id,
+            mcp_hint: t.mcp_hint,
         })
         .collect();
-    Json(tools)
+    Json(response)
 }
 
 async fn handle_execute(
@@ -673,6 +689,8 @@ mod tests {
                 name: "shopping:add_item".to_string(),
                 description: "Add item".to_string(),
                 input_schema_json: "{}".to_string(),
+                mcp: false,
+                mcp_hint: None,
             }],
         );
         let app = make_router(Arc::clone(&registry));
@@ -713,6 +731,8 @@ mod tests {
                 name: "shopping:add_item".to_string(),
                 description: "Add item".to_string(),
                 input_schema_json: "{}".to_string(),
+                mcp: false,
+                mcp_hint: None,
             }],
         );
         let app = make_router(Arc::clone(&registry));
@@ -772,6 +792,8 @@ mod tests {
                 name: "shopping:add_item".to_string(),
                 description: "".to_string(),
                 input_schema_json: "{}".to_string(),
+                mcp: false,
+                mcp_hint: None,
             }],
         );
         let app = make_router(Arc::clone(&registry));
@@ -1404,6 +1426,98 @@ mod tests {
         let bytes = resp.into_body().collect().await.unwrap().to_bytes();
         let json: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
         assert!(json["task_id"].as_str().is_some_and(|s| !s.is_empty()));
+    }
+
+    #[tokio::test]
+    async fn test_mcp_filter_excludes_non_mcp_tools() {
+        let registry = Arc::new(ToolRegistry::new());
+        let register_body = serde_json::json!({
+            "app_id": "shopping",
+            "callback_url": "http://app:8000",
+            "tools": [{"name": "shopping:add_item", "description": "Add item", "input_schema_json": "{}"}],
+            "mcp": false
+        });
+        make_router(Arc::clone(&registry))
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/v1/register")
+                    .header("content-type", "application/json")
+                    .body(Body::from(register_body.to_string()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        let resp = make_router(Arc::clone(&registry))
+            .oneshot(Request::builder().uri("/v1/tools?mcp=true").body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        let body = resp.into_body().collect().await.unwrap().to_bytes();
+        let tools: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(tools, serde_json::json!([]));
+    }
+
+    #[tokio::test]
+    async fn test_mcp_filter_includes_mcp_tools() {
+        let registry = Arc::new(ToolRegistry::new());
+        let register_body = serde_json::json!({
+            "app_id": "shopping",
+            "callback_url": "http://app:8000",
+            "tools": [{"name": "shopping:add_item", "description": "Add item", "input_schema_json": "{}", "mcp_hint": "Use when buying"}],
+            "mcp": true
+        });
+        make_router(Arc::clone(&registry))
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/v1/register")
+                    .header("content-type", "application/json")
+                    .body(Body::from(register_body.to_string()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        let resp = make_router(Arc::clone(&registry))
+            .oneshot(Request::builder().uri("/v1/tools?mcp=true").body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        let body = resp.into_body().collect().await.unwrap().to_bytes();
+        let tools: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(tools.as_array().unwrap().len(), 1);
+        assert_eq!(tools[0]["name"], "shopping:add_item");
+        assert_eq!(tools[0]["mcp_hint"], "Use when buying");
+    }
+
+    #[tokio::test]
+    async fn test_mcp_filter_absent_returns_all_tools() {
+        let registry = Arc::new(ToolRegistry::new());
+        let register_body = serde_json::json!({
+            "app_id": "shopping",
+            "callback_url": "http://app:8000",
+            "tools": [{"name": "shopping:add_item", "description": "Add item", "input_schema_json": "{}"}],
+            "mcp": false
+        });
+        make_router(Arc::clone(&registry))
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/v1/register")
+                    .header("content-type", "application/json")
+                    .body(Body::from(register_body.to_string()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        let resp = make_router(Arc::clone(&registry))
+            .oneshot(Request::builder().uri("/v1/tools").body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        let body = resp.into_body().collect().await.unwrap().to_bytes();
+        let tools: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(tools.as_array().unwrap().len(), 1);
     }
 
     #[tokio::test]
