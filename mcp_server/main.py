@@ -87,9 +87,9 @@ async def mcp_handler(
                     "description": description,
                     "inputSchema": json.loads(t["input_schema_json"]),
                 })
+            return ok({"tools": mcp_tools})
         except Exception as exc:
             return err(-32603, f"bridge unavailable: {exc}")
-        return ok({"tools": mcp_tools})
 
     if method == "tools/call":
         tool_name = params.get("name", "")
