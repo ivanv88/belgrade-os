@@ -218,3 +218,64 @@ def test_watchdog_does_not_restart_live_app(tmp_path):
         assert start_call_count == 1, "live app must not be restarted"
 
     asyncio.run(run())
+
+
+def test_start_injects_mcp_enabled_when_manifest_has_mcp_true(tmp_path):
+    """BEG_OS_MCP_ENABLED=true injected when manifest has mcp: true."""
+    from main import _AppManifest
+    app = AppProcess(app_id="shopping", path=tmp_path, port=9001)
+    captured_env = {}
+
+    manifest_data = {"app_id": "shopping", "mcp": True}
+    (tmp_path / "manifest.json").write_text(json.dumps(manifest_data))
+
+    def fake_popen(cmd, env, **kwargs):
+        captured_env.update(env)
+        mock = MagicMock()
+        mock.pid = 1234
+        return mock
+
+    with patch("main.subprocess.Popen", side_effect=fake_popen), \
+         patch("main.open", MagicMock()):
+        asyncio.run(app.start())
+
+    assert captured_env.get("BEG_OS_MCP_ENABLED") == "true"
+
+
+def test_start_does_not_inject_mcp_when_manifest_has_mcp_false(tmp_path):
+    """BEG_OS_MCP_ENABLED not set when manifest has mcp: false."""
+    app = AppProcess(app_id="shopping", path=tmp_path, port=9001)
+    captured_env = {}
+
+    manifest_data = {"app_id": "shopping", "mcp": False}
+    (tmp_path / "manifest.json").write_text(json.dumps(manifest_data))
+
+    def fake_popen(cmd, env, **kwargs):
+        captured_env.update(env)
+        mock = MagicMock()
+        mock.pid = 1234
+        return mock
+
+    with patch("main.subprocess.Popen", side_effect=fake_popen), \
+         patch("main.open", MagicMock()):
+        asyncio.run(app.start())
+
+    assert captured_env.get("BEG_OS_MCP_ENABLED") != "true"
+
+
+def test_start_does_not_inject_mcp_when_no_manifest(tmp_path):
+    """BEG_OS_MCP_ENABLED not set when manifest is absent."""
+    app = AppProcess(app_id="shopping", path=tmp_path, port=9001)
+    captured_env = {}
+
+    def fake_popen(cmd, env, **kwargs):
+        captured_env.update(env)
+        mock = MagicMock()
+        mock.pid = 1234
+        return mock
+
+    with patch("main.subprocess.Popen", side_effect=fake_popen), \
+         patch("main.open", MagicMock()):
+        asyncio.run(app.start())
+
+    assert "BEG_OS_MCP_ENABLED" not in captured_env

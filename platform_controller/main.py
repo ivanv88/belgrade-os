@@ -70,6 +70,7 @@ class _AppManifest(BaseModel):
     ui: Optional[_AppUIManifest] = None
     related_apps: List[str] = []
     notifications: Optional[_NotificationsManifest] = None
+    mcp: bool = False
 
 
 # --- App Supervision ---
@@ -117,6 +118,8 @@ class AppProcess:
         env["BEG_OS_DB_URL"] = DB_URL
         env["BEG_OS_REDIS_URL"] = os.getenv("APP_REDIS_URL") or os.getenv("BEG_OS_REDIS_URL", "redis://localhost:6379")
         env["BEG_OS_NOTIFICATION_DRIVER"] = notification_driver
+        if manifest and manifest.mcp:
+            env["BEG_OS_MCP_ENABLED"] = "true"
 
         cmd = ["python3", str(self.path / "main.py")]
 
