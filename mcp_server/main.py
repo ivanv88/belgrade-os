@@ -38,6 +38,8 @@ async def token_endpoint(request: Request):
 
     try:
         oauth.validate_cf_jwt(cf_jwt)
+    except ValueError:
+        raise  # server misconfiguration — propagate as 500
     except Exception:
         raise HTTPException(status_code=401, detail="invalid CF service token")
 
