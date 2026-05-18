@@ -8,88 +8,91 @@ deps:
 	brew install protobuf go rust
 	go install google.golang.org/protobuf/cmd/protoc-gen-go@latest
 	pip3 install -r sdk/requirements.txt \
-	             -r runner/requirements-dev.txt \
-	             -r inference/requirements-dev.txt \
-	             -r notification/requirements-dev.txt \
-	             -r vault_service/requirements-dev.txt \
-	             -r platform_controller/requirements-dev.txt
+	             -r services/runner/requirements-dev.txt \
+	             -r services/inference/requirements-dev.txt \
+	             -r services/notification/requirements-dev.txt \
+	             -r services/vault_service/requirements-dev.txt \
+	             -r services/platform_controller/requirements-dev.txt \
+	             -r services/mcp_server/requirements.txt
 
 # ─── Proto codegen ────────────────────────────────────────────────────────────
-proto: gateway/gen/belgrade_os.pb.go runner/gen/belgrade_os_pb2.py inference/gen/belgrade_os_pb2.py notification/gen/belgrade_os_pb2.py sdk/belgrade_sdk/gen/belgrade_os_pb2.py vault_service/gen/belgrade_os_pb2.py platform_controller/gen/belgrade_os_pb2.py
+proto: services/gateway/gen/belgrade_os.pb.go services/runner/gen/belgrade_os_pb2.py services/inference/gen/belgrade_os_pb2.py services/notification/gen/belgrade_os_pb2.py sdk/belgrade_sdk/gen/belgrade_os_pb2.py services/vault_service/gen/belgrade_os_pb2.py services/platform_controller/gen/belgrade_os_pb2.py
 	@echo "proto codegen complete"
 
-gateway/gen/belgrade_os.pb.go: $(PROTO_SRC)
-	mkdir -p gateway/gen
+services/gateway/gen/belgrade_os.pb.go: $(PROTO_SRC)
+	mkdir -p services/gateway/gen
 	protoc -Iproto \
-	  --go_out=gateway/gen \
+	  --go_out=services/gateway/gen \
 	  --go_opt=paths=source_relative \
 	  $(PROTO_SRC)
 
-runner/gen/belgrade_os_pb2.py: $(PROTO_SRC)
-	mkdir -p runner/gen
-	touch runner/gen/__init__.py
-	python3 -m grpc_tools.protoc -Iproto --python_out=runner/gen $(PROTO_SRC)
+services/runner/gen/belgrade_os_pb2.py: $(PROTO_SRC)
+	mkdir -p services/runner/gen
+	touch services/runner/gen/__init__.py
+	python3 -m grpc_tools.protoc -Iproto --python_out=services/runner/gen $(PROTO_SRC)
 
-inference/gen/belgrade_os_pb2.py: $(PROTO_SRC)
-	mkdir -p inference/gen
-	touch inference/gen/__init__.py
-	python3 -m grpc_tools.protoc -Iproto --python_out=inference/gen $(PROTO_SRC)
+services/inference/gen/belgrade_os_pb2.py: $(PROTO_SRC)
+	mkdir -p services/inference/gen
+	touch services/inference/gen/__init__.py
+	python3 -m grpc_tools.protoc -Iproto --python_out=services/inference/gen $(PROTO_SRC)
 
-notification/gen/belgrade_os_pb2.py: $(PROTO_SRC)
-	mkdir -p notification/gen
-	touch notification/gen/__init__.py
-	python3 -m grpc_tools.protoc -Iproto --python_out=notification/gen $(PROTO_SRC)
+services/notification/gen/belgrade_os_pb2.py: $(PROTO_SRC)
+	mkdir -p services/notification/gen
+	touch services/notification/gen/__init__.py
+	python3 -m grpc_tools.protoc -Iproto --python_out=services/notification/gen $(PROTO_SRC)
 
 sdk/belgrade_sdk/gen/belgrade_os_pb2.py: $(PROTO_SRC)
 	mkdir -p sdk/belgrade_sdk/gen
 	touch sdk/belgrade_sdk/gen/__init__.py
 	python3 -m grpc_tools.protoc -Iproto --python_out=sdk/belgrade_sdk/gen $(PROTO_SRC)
 
-vault_service/gen/belgrade_os_pb2.py: $(PROTO_SRC)
-	mkdir -p vault_service/gen
-	touch vault_service/gen/__init__.py
-	python3 -m grpc_tools.protoc -Iproto --python_out=vault_service/gen $(PROTO_SRC)
+services/vault_service/gen/belgrade_os_pb2.py: $(PROTO_SRC)
+	mkdir -p services/vault_service/gen
+	touch services/vault_service/gen/__init__.py
+	python3 -m grpc_tools.protoc -Iproto --python_out=services/vault_service/gen $(PROTO_SRC)
 
-platform_controller/gen/belgrade_os_pb2.py: $(PROTO_SRC)
-	mkdir -p platform_controller/gen
-	touch platform_controller/gen/__init__.py
-	python3 -m grpc_tools.protoc -Iproto --python_out=platform_controller/gen $(PROTO_SRC)
+services/platform_controller/gen/belgrade_os_pb2.py: $(PROTO_SRC)
+	mkdir -p services/platform_controller/gen
+	touch services/platform_controller/gen/__init__.py
+	python3 -m grpc_tools.protoc -Iproto --python_out=services/platform_controller/gen $(PROTO_SRC)
 
-# Rust codegen runs via bridge/build.rs — no explicit Make target needed.
+# Rust codegen runs via services/bridge/build.rs — no explicit Make target needed.
 
 # ─── Build ────────────────────────────────────────────────────────────────────
 build: proto
-	cd gateway && go build ./...
-	cd bridge && cargo build --release
+	cd services/gateway && go build ./...
+	cd services/bridge && cargo build --release
 
 # ─── Test ─────────────────────────────────────────────────────────────────────
 test: proto
-	cd gateway && go test ./... -v
-	cd runner && python3 -m pytest tests/ -v
-	cd inference && python3 -m pytest tests/ -v
-	cd notification && python3 -m pytest tests/ -v
-	cd platform_controller && python3 -m pytest tests/ -v
-	cd mcp_server && python3 -m pytest tests/ -v
-	cd bridge && cargo test
+	cd services/gateway && go test ./... -v
+	cd services/runner && python3 -m pytest tests/ -v
+	cd services/inference && python3 -m pytest tests/ -v
+	cd services/notification && python3 -m pytest tests/ -v
+	cd services/vault_service && python3 -m pytest tests/ -v
+	cd services/platform_controller && python3 -m pytest tests/ -v
+	cd services/mcp_server && python3 -m pytest tests/ -v
+	cd services/watchdog && python3 -m pytest tests/ -v
+	cd services/bridge && cargo test
 
 # ─── Dev infrastructure ───────────────────────────────────────────────────────
 dev:
 	docker-compose up -d redis db docker-socket-proxy tunnel
 
 start: dev
-	./start.sh
+	./scripts/start.sh
 
 stop:
-	./stop.sh
+	./scripts/stop.sh
 	docker-compose down
 
 # ─── Clean generated artifacts ────────────────────────────────────────────────
 clean:
-	rm -f gateway/gen/belgrade_os.pb.go
-	rm -f runner/gen/belgrade_os_pb2.py runner/gen/belgrade_os_pb2_grpc.py
-	rm -f inference/gen/belgrade_os_pb2.py inference/gen/belgrade_os_pb2_grpc.py
-	rm -f notification/gen/belgrade_os_pb2.py notification/gen/belgrade_os_pb2_grpc.py
+	rm -f services/gateway/gen/belgrade_os.pb.go
+	rm -f services/runner/gen/belgrade_os_pb2.py services/runner/gen/belgrade_os_pb2_grpc.py
+	rm -f services/inference/gen/belgrade_os_pb2.py services/inference/gen/belgrade_os_pb2_grpc.py
+	rm -f services/notification/gen/belgrade_os_pb2.py services/notification/gen/belgrade_os_pb2_grpc.py
 	rm -f sdk/belgrade_sdk/gen/belgrade_os_pb2.py sdk/belgrade_sdk/gen/belgrade_os_pb2_grpc.py
-	rm -f vault_service/gen/belgrade_os_pb2.py
-	rm -f platform_controller/gen/belgrade_os_pb2.py
-	cd bridge && cargo clean
+	rm -f services/vault_service/gen/belgrade_os_pb2.py
+	rm -f services/platform_controller/gen/belgrade_os_pb2.py
+	cd services/bridge && cargo clean
