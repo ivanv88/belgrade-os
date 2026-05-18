@@ -7,7 +7,7 @@ import pathlib
 
 # Import watchdog without executing main()
 spec = importlib.util.spec_from_file_location(
-    "watchdog", pathlib.Path(__file__).parent.parent / "watchdog.py"
+    "watchdog", pathlib.Path(__file__).parent.parent / "main.py"
 )
 watchdog = importlib.util.module_from_spec(spec)
 sys.modules["watchdog"] = watchdog
