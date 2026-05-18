@@ -7,6 +7,7 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
+export PYTHONPATH=.
 
 # Load .env
 if [ ! -f .env ]; then
@@ -59,33 +60,33 @@ echo ""
 
 # 1. Bridge (Rust binary)
 echo "[1/7] Bridge"
-start_service bridge ./bridge/target/release/bridge
+start_service bridge ./services/bridge/target/release/bridge
 wait_tcp bridge localhost 8081
 
 # 2. Vault service
 echo "[2/7] Vault service"
-start_service vault_service ./venv/bin/python3 vault_service/main.py
+start_service vault_service ./venv/bin/python3 services/vault_service/main.py
 
 # 3. Notification service
 echo "[3/7] Notification service"
-start_service notification ./venv/bin/python3 notification/main.py
+start_service notification ./venv/bin/python3 services/notification/main.py
 
 # 4. Inference worker
 echo "[4/7] Inference worker"
-start_service inference ./venv/bin/python3 inference/main.py
+start_service inference ./venv/bin/python3 services/inference/main.py
 
 # 5. Runner
 echo "[5/7] Runner"
-start_service runner ./venv/bin/python3 runner/main.py
+start_service runner ./venv/bin/python3 services/runner/main.py
 
 # 6. Gateway (Go binary)
 echo "[6/7] Gateway"
-start_service gateway ./gateway/gateway
+start_service gateway ./services/gateway/gateway
 wait_tcp gateway localhost "${PORT:-8080}"
 
 # 7. Platform controller — last, because it starts app subprocesses
 echo "[7/7] Platform controller"
-start_service platform_controller ./venv/bin/python3 platform_controller/main.py
+start_service platform_controller ./venv/bin/python3 services/platform_controller/main.py
 wait_tcp platform_controller localhost 8000
 
 echo ""
