@@ -16,6 +16,7 @@ from sqlalchemy.orm import declarative_base
 
 from scheduler import SchedulerManager, ScheduleEntry, PermissionSyncManager
 from ephemeral_runner import EphemeralRunner, OutputValidationError
+from config import load_config as _load_config
 
 import re
 import secrets
@@ -25,9 +26,11 @@ from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 logger = logging.getLogger(__name__)
 
+_cfg = _load_config()
+
 # --- Database Setup ---
-DB_URL = os.getenv("DATABASE_URL", "postgresql+asyncpg://postgres:postgres@localhost:5432/postgres")
-REDIS_URL = os.getenv("CONTROLLER_REDIS_URL") or os.getenv("BEG_OS_REDIS_URL", "redis://localhost:6379")
+DB_URL = _cfg.db_url
+REDIS_URL = _cfg.redis_url
 CONTROLLER_TOKEN = os.getenv("CONTROLLER_API_TOKEN", "")
 SECCOMP_PROFILE = os.getenv("SECCOMP_PROFILE", "/config/seccomp-untrusted.json")
 APPS_ROOT = Path(os.getenv("APPS_ROOT", str(Path(__file__).parent.parent / "apps")))
@@ -114,7 +117,7 @@ class AppProcess:
         env = os.environ.copy()
         env["BEG_OS_APP_ID"] = self.app_id
         env["BEG_OS_CALLBACK_URL"] = f"http://localhost:{self.port}"
-        env["BEG_OS_BRIDGE_URL"] = os.getenv("BEG_OS_BRIDGE_URL", "http://localhost:8081")
+        env["BEG_OS_BRIDGE_URL"] = _cfg.bridge_url
         env["BEG_OS_DB_URL"] = DB_URL
         env["BEG_OS_REDIS_URL"] = os.getenv("APP_REDIS_URL") or os.getenv("BEG_OS_REDIS_URL", "redis://localhost:6379")
         env["BEG_OS_NOTIFICATION_DRIVER"] = notification_driver
@@ -421,9 +424,8 @@ async def _untrusted_consumer_loop(redis_url: str) -> None:
 
 # --- FastAPI App ---
 app = FastAPI(title="Belgrade Platform Controller")
-bridge_url = os.getenv("BEG_OS_BRIDGE_URL", "http://localhost:8081")
 app_supervisor = AppSupervisor(apps_root=Path(__file__).parent.parent / "apps")
-scheduler_manager = SchedulerManager(bridge_url=bridge_url)
+scheduler_manager = SchedulerManager(bridge_url=_cfg.bridge_url)
 permission_sync = PermissionSyncManager(db_engine=engine, redis_url=REDIS_URL)
 
 class AppAction(BaseModel):
@@ -575,4 +577,4 @@ async def delete_app_schedules(app_id: str, _: None = Depends(_require_token)):
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+    uvicorn.run(app, host="0.0.0.0", port=_cfg.port)
