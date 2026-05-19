@@ -5,10 +5,12 @@ from typing import Optional
 import redis.asyncio as aioredis
 import redis.exceptions
 
-INBOUND_STREAM = "tasks:inbound"
-TOOL_CALLS_STREAM = "tasks:tool_calls"
-UNTRUSTED_CALLS_STREAM = "tasks:untrusted_calls"
-TOOL_RESULTS_STREAM = "tasks:tool_results"
+from shared.streams import (
+    INBOUND_STREAM,
+    TOOL_CALLS_STREAM,
+    TOOL_RESULTS_STREAM,
+    UNTRUSTED_CALLS_STREAM,
+)
 
 _MAX_TOOL_RESULT_ITERATIONS = 10
 

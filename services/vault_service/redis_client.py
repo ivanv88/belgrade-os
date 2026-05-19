@@ -3,7 +3,7 @@ from typing import Optional
 import redis.asyncio as aioredis
 import redis.exceptions
 
-VAULT_OPS_STREAM = "tasks:vault_ops"
+from shared.streams import VAULT_OPS_STREAM
 CONSUMER_GROUP = "vault-workers"
 
 

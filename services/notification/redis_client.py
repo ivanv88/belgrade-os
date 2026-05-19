@@ -3,7 +3,7 @@ from typing import Optional
 import redis.asyncio as aioredis
 import redis.exceptions
 
-NOTIFICATIONS_STREAM = "tasks:notifications"
+from shared.streams import NOTIFICATIONS_STREAM
 CONSUMER_GROUP = "notification-workers"
 
 

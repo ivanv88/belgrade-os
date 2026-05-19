@@ -1,10 +1,9 @@
 from __future__ import annotations
+from shared.streams import TOOL_CALLS_STREAM, TOOL_RESULTS_STREAM
 from typing import Optional
 import redis.asyncio as aioredis
 import redis.exceptions
 
-TOOL_CALLS_STREAM   = "tasks:tool_calls"
-TOOL_RESULTS_STREAM = "tasks:tool_results"
 LEASE_KEY_PREFIX    = "lease"
 _DEFAULT_GROUP      = "tool-runners"
 
