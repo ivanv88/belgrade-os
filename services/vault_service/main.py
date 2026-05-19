@@ -7,13 +7,15 @@ from pathlib import Path
 from gen import belgrade_os_pb2
 from redis_client import RedisClient, CONSUMER_GROUP
 from worker import process_vault_op
+from config import load_config as _load_config
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 log = logging.getLogger(__name__)
 
-VAULT_ROOT = Path(os.getenv("BEG_OS_VAULT_PATH", "/tmp/belgrade-vault"))
-REDIS_URL = os.getenv("VAULT_REDIS_URL") or os.getenv("BEG_OS_REDIS_URL", "redis://localhost:6379")
-WORKER_ID = socket.gethostname()
+_cfg = _load_config()
+VAULT_ROOT = Path(_cfg.vault_path)
+REDIS_URL  = _cfg.redis_url
+WORKER_ID  = _cfg.effective_worker_id
 
 async def _consumer_loop(redis: RedisClient) -> None:
     while True:
