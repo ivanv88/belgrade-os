@@ -3,8 +3,9 @@ import json
 import os
 import uuid
 import httpx
+from config import load_config as _load_config
 
-_BRIDGE_URL = os.getenv("BRIDGE_URL", "http://localhost:8081")
+_BRIDGE_URL = _load_config().bridge_url
 
 
 async def list_mcp_tools() -> list:

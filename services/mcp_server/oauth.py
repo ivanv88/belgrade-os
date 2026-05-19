@@ -4,12 +4,14 @@ from typing import Optional
 import jwt
 from datetime import datetime, timedelta, timezone
 from jwt import PyJWKClient
+from config import load_config as _load_config
 
+_cfg = _load_config()
 _jwks_client: Optional[PyJWKClient] = None
 
 
 def _get_jwt_secret() -> str:
-    secret = os.getenv("MCP_JWT_SECRET", "")
+    secret = _cfg.mcp_jwt_secret
     if not secret:
         raise ValueError("MCP_JWT_SECRET is required")
     return secret
@@ -18,7 +20,7 @@ def _get_jwt_secret() -> str:
 def _get_jwks_client() -> PyJWKClient:
     global _jwks_client
     if _jwks_client is None:
-        domain = os.getenv("CF_TEAM_DOMAIN", "")
+        domain = _cfg.cf_team_domain
         if not domain:
             raise ValueError("CF_TEAM_DOMAIN is required")
         url = f"https://{domain}.cloudflareaccess.com/cdn-cgi/access/certs"
@@ -28,7 +30,7 @@ def _get_jwks_client() -> PyJWKClient:
 
 def validate_cf_jwt(token: str) -> dict:
     """Validate a Cloudflare Access JWT. Raises on invalid token."""
-    audience = os.getenv("CF_MCP_AUDIENCE", "")
+    audience = _cfg.cf_mcp_audience
     if not audience:
         raise ValueError("CF_MCP_AUDIENCE is required")
     client = _get_jwks_client()

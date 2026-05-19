@@ -7,13 +7,16 @@ from fastapi import FastAPI, HTTPException, Request, Depends
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 import oauth
 import registry
+from config import load_config as _load_config
+
+_cfg = _load_config()
 
 app = FastAPI(title="Belgrade OS MCP Server")
 
 _security = HTTPBearer(auto_error=False)
 
-_MCP_DEFAULT_USER_ID = os.getenv("MCP_DEFAULT_USER_ID", "")
-_MCP_DEFAULT_TENANT_ID = os.getenv("MCP_DEFAULT_TENANT_ID", "")
+_MCP_DEFAULT_USER_ID = _cfg.default_user_id
+_MCP_DEFAULT_TENANT_ID = _cfg.default_tenant_id
 
 
 async def _require_auth(
@@ -120,4 +123,4 @@ async def mcp_handler(
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=int(os.getenv("MCP_PORT", "8083")))
+    uvicorn.run(app, host="0.0.0.0", port=_cfg.port)
