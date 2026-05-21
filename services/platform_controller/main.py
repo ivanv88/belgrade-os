@@ -502,7 +502,7 @@ async def list_apps():
     }
 
 @app.post("/schedules")
-async def create_schedule(entry: ScheduleEntry):
+async def create_schedule(entry: ScheduleEntry, _: None = Depends(_require_token)):
     async with SessionLocal() as session:
         await session.execute(text("""
             INSERT INTO shared.schedules (id, app_id, user_id, tenant_id, cron, tool_name, params, updated_at)
@@ -522,7 +522,7 @@ async def create_schedule(entry: ScheduleEntry):
     return {"status": "scheduled", "id": entry.id}
 
 @app.delete("/schedules/{schedule_id}")
-async def delete_schedule(schedule_id: str):
+async def delete_schedule(schedule_id: str, _: None = Depends(_require_token)):
     async with SessionLocal() as session:
         await session.execute(text("DELETE FROM shared.schedules WHERE id = :id"), {"id": schedule_id})
         await session.commit()
@@ -531,7 +531,7 @@ async def delete_schedule(schedule_id: str):
     return {"status": "deleted", "id": schedule_id}
 
 @app.get("/schedules")
-async def list_schedules(app_id: Optional[str] = None, user_id: Optional[str] = None):
+async def list_schedules(app_id: Optional[str] = None, user_id: Optional[str] = None, _: None = Depends(_require_token)):
     async with SessionLocal() as session:
         if app_id and user_id:
             result = await session.execute(

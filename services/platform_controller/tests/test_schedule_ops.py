@@ -148,7 +148,7 @@ async def test_list_schedules_filter_by_app_id():
 
     with patch.object(ctrl_main, "SessionLocal", return_value=mock_session_cm):
         client = _make_test_client()
-        resp = client.get("/schedules?app_id=shopping")
+        resp = client.get("/schedules?app_id=shopping", headers={"Authorization": "Bearer test-token"})
 
     assert resp.status_code == 200
     data = resp.json()
@@ -179,7 +179,7 @@ async def test_list_schedules_filter_by_user_id():
 
     with patch.object(ctrl_main, "SessionLocal", return_value=mock_session_cm):
         client = _make_test_client()
-        resp = client.get("/schedules?user_id=u1")
+        resp = client.get("/schedules?user_id=u1", headers={"Authorization": "Bearer test-token"})
 
     assert resp.status_code == 200
     data = resp.json()
@@ -210,7 +210,7 @@ async def test_list_schedules_filter_by_app_id_and_user_id():
 
     with patch.object(ctrl_main, "SessionLocal", return_value=mock_session_cm):
         client = _make_test_client()
-        resp = client.get("/schedules?app_id=shopping&user_id=u1")
+        resp = client.get("/schedules?app_id=shopping&user_id=u1", headers={"Authorization": "Bearer test-token"})
 
     assert resp.status_code == 200
     data = resp.json()

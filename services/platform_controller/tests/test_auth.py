@@ -81,3 +81,39 @@ def test_reload_accepts_valid_app_id():
             headers={"Authorization": "Bearer test-secret"},
         )
     assert resp.status_code == 200
+
+
+# --- Schedule endpoint auth ---
+
+def test_create_schedule_without_token_returns_401():
+    client, _ = _get_client("test-secret")
+    resp = client.post("/schedules", json={
+        "id": "s1", "app_id": "shopping", "user_id": "u1", "tenant_id": "t1",
+        "cron": "0 9 * * *", "tool_name": "shopping:remind", "params": {},
+    })
+    assert resp.status_code in (401, 403)
+
+
+def test_create_schedule_with_wrong_token_returns_403():
+    client, _ = _get_client("test-secret")
+    resp = client.post(
+        "/schedules",
+        json={
+            "id": "s1", "app_id": "shopping", "user_id": "u1", "tenant_id": "t1",
+            "cron": "0 9 * * *", "tool_name": "shopping:remind", "params": {},
+        },
+        headers={"Authorization": "Bearer wrong-token"},
+    )
+    assert resp.status_code == 403
+
+
+def test_delete_schedule_without_token_returns_401():
+    client, _ = _get_client("test-secret")
+    resp = client.delete("/schedules/s1")
+    assert resp.status_code in (401, 403)
+
+
+def test_list_schedules_without_token_returns_401():
+    client, _ = _get_client("test-secret")
+    resp = client.get("/schedules")
+    assert resp.status_code in (401, 403)
