@@ -10,13 +10,15 @@ Belgrade OS employs a "Redis-as-a-Transport" architecture. Services are decouple
 
 | Directory | Language | Role |
 | :--- | :--- | :--- |
-| `gateway/` | Go | HTTP entry point, JWT auth, secure UI serving, and RBAC enforcement. |
-| `bridge/` | Rust | Capability registry and event broker with write-through Redis persistence. |
-| `inference/` | Python | Inference Controller; drives the tool-use loop (supports Claude & Gemini). |
-| `runner/` | Python | Resource Runner; consumes tool calls and dispatches to app processes. |
-| `platform_controller/` | Python | The OS Kernel; manages app lifecycles and RBAC permission sync. |
-| `vault_service/` | Python | Vault Gatekeeper; manages atomic writes to Obsidian knowledge base. |
-| `notification/` | Python | Notification Service; dispatches alerts via ntfy.sh/Firebase. |
+| `services/gateway/` | Go | HTTP entry point, JWT auth, secure UI serving, and RBAC enforcement. |
+| `services/bridge/` | Rust | Capability registry and event broker with write-through Redis persistence. |
+| `services/inference/` | Python | Inference Controller; drives the tool-use loop (supports Claude & Gemini). |
+| `services/runner/` | Python | Resource Runner; consumes tool calls and dispatches to app processes. |
+| `services/platform_controller/` | Python | The OS Kernel; manages app lifecycles and RBAC permission sync. |
+| `services/vault_service/` | Python | Vault Gatekeeper; manages atomic writes to Obsidian knowledge base. |
+| `services/notification/` | Python | Notification Service; dispatches alerts via ntfy.sh/Firebase. |
+| `services/mcp_server/` | Python | MCP Server; exposes Belgrade tools via the Model Context Protocol (JSON-RPC). |
+| `services/watchdog/` | Python | Watchdog; monitors service health and triggers restarts on failure. |
 | `sdk/` | Python | Belgrade SDK; provides decorators and context for rapid app development. |
 
 ---
@@ -26,8 +28,8 @@ Belgrade OS employs a "Redis-as-a-Transport" architecture. Services are decouple
 The easiest way to set up your development environment is using our universal setup script:
 
 ```bash
-chmod +x setup.sh
-./setup.sh
+chmod +x scripts/setup.sh
+./scripts/setup.sh
 ```
 
 This script will check for system prerequisites, set up your Python virtual environment, and build all services.
@@ -52,7 +54,7 @@ python3 scripts/seed_permissions.py
 
 # 3. Start services (In separate terminals or via your process manager)
 # In production, these are managed by the Platform Controller
-cd platform_controller && python3 main.py
+cd services/platform_controller && python3 main.py
 ```
 
 ### 5. Running Tests

@@ -10,13 +10,15 @@ Belgrade OS employs a "Redis-as-a-Transport" architecture. Services are decouple
 
 | Directory | Language | Role |
 | :--- | :--- | :--- |
-| `gateway/` | Go | HTTP entry point, JWT authentication (Cloudflare), task ingestion, SSE proxying, and **secure UI serving**. |
-| `inference/` | Python | Inference Controller; interacts with LLMs (Claude) and drives the tool-use loop. |
-| `runner/` | Python | Resource Runner; consumes tool calls from Redis and dispatches them to the Capability Bridge. |
-| `bridge/` | Rust | Capability Bridge; the central tool registry and event broker. Forwards tool calls and events to apps. |
-| `platform_controller/` | Python | The OS Kernel; manages app sub-processes, hot-reloading, dynamic scheduler, and **RBAC sync**. |
-| `vault_service/` | Python | Vault Service; gatekeeps the Obsidian vault, performing atomic writes via Redis streams. |
-| `notification/` | Python | Notification Service; consumes `tasks:notifications` and dispatches via ntfy.sh. |
+| `services/gateway/` | Go | HTTP entry point, JWT authentication (Cloudflare), task ingestion, SSE proxying, and **secure UI serving**. |
+| `services/inference/` | Python | Inference Controller; interacts with LLMs (Claude) and drives the tool-use loop. |
+| `services/runner/` | Python | Resource Runner; consumes tool calls from Redis and dispatches them to the Capability Bridge. |
+| `services/bridge/` | Rust | Capability Bridge; the central tool registry and event broker. Forwards tool calls and events to apps. |
+| `services/platform_controller/` | Python | The OS Kernel; manages app sub-processes, hot-reloading, dynamic scheduler, and **RBAC sync**. |
+| `services/vault_service/` | Python | Vault Service; gatekeeps the Obsidian vault, performing atomic writes via Redis streams. |
+| `services/notification/` | Python | Notification Service; consumes `tasks:notifications` and dispatches via ntfy.sh. |
+| `services/mcp_server/` | Python | MCP Server; exposes Belgrade tools via the Model Context Protocol (JSON-RPC). |
+| `services/watchdog/` | Python | Watchdog; monitors service health and triggers restarts on failure. |
 | `sdk/` | Python | Belgrade SDK; provides the `@tool` and `@on_event` decorators and **indirect Vault access**. |
 
 ### App Execution & Tool Discovery
@@ -72,15 +74,15 @@ make clean
 
 ```bash
 # Go (Gateway)
-cd gateway && go test ./... -v
+cd services/gateway && go test ./... -v
 
 # Python (Inference/Runner/Notification)
-cd runner && python3 -m pytest tests/ -v
-cd inference && python3 -m pytest tests/ -v
-cd notification && python3 -m pytest tests/ -v
+cd services/runner && python3 -m pytest tests/ -v
+cd services/inference && python3 -m pytest tests/ -v
+cd services/notification && python3 -m pytest tests/ -v
 
 # Rust (Bridge)
-cd bridge && cargo test
+cd services/bridge && cargo test
 ```
 
 ## Development Conventions
