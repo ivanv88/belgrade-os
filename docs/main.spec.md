@@ -41,13 +41,13 @@ These rules govern how the system is designed. Violations indicate planning drif
 
 ### Gateway is an edge, not an inference API
 
-The Gateway (`gateway/`) authenticates requests, enforces RBAC, serves static UI assets, and
+The Gateway (`services/gateway/`) authenticates requests, enforces RBAC, serves static UI assets, and
 routes direct app actions. It is **not** the product inference API. Inference is an internal
 platform capability, not a public endpoint.
 
 ### Inference is internal — apps own their workflows
 
-The Inference Controller (`inference/`) is a background worker that reads from `tasks:inbound`.
+The Inference Controller (`services/inference/`) is a background worker that reads from `tasks:inbound`.
 Apps decide when AI is needed. When an app needs inference it enqueues a `Task` proto directly
 to Redis via `ctx.inference.request(prompt)` from the Belgrade SDK — no HTTP call to Gateway.
 
@@ -151,7 +151,7 @@ Focus: validate the platform with real apps, close known gaps before adding new 
 - [ ] **Filesystem Hot-Reload**: Platform Controller has explicit `POST /apps/reload` but no filesystem watcher. Add inotify-based watch on `apps/` so edits to `main.py` or `manifest.json` trigger a reload automatically.
 - [ ] **Dashboard Shell**: A unified authenticated entry point listing all apps the user has access to, with launch links and basic status.
 - [ ] **App-Owned Scheduling**: Platform Controller has APScheduler + `/schedules` CRUD API (admin-level). Apps cannot schedule tasks from within a request handler yet. Add `ctx.schedule(cron, tool_name, params)` and `ctx.unschedule(schedule_id)` to the SDK, backed by the existing infrastructure. Example use case: meal planner schedules a shopping reminder when it generates a weekly plan.
-- [ ] **Firebase Notification Driver**: `notification/drivers/` has the interface (`base.py`) and ntfy implementation. Firebase driver would unlock mobile push.
+- [ ] **Firebase Notification Driver**: `services/notification/drivers/` has the interface (`base.py`) and ntfy implementation. Firebase driver would unlock mobile push.
 
 ### 🔮 Phase 3: External Connectivity
 
