@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"os"
@@ -10,6 +11,43 @@ import (
 	"belgrade-os/gateway/auth"
 	"belgrade-os/gateway/redis"
 )
+
+type bundleConfig struct {
+	Path         string `json:"path"`
+	Entry        string `json:"entry"`
+	RequiredRole string `json:"required_role"`
+}
+
+type uiConfig struct {
+	Enabled bool                    `json:"enabled"`
+	Bundles map[string]bundleConfig `json:"bundles"`
+}
+
+type appManifest struct {
+	UI *uiConfig `json:"ui"`
+}
+
+// loadBundle reads manifest.json for appID and returns the config for the
+// requested bundle. Returns an error if the manifest is missing, UI is
+// disabled, or the bundle is not declared.
+func (h *Handler) loadBundle(appID, bundleID string) (*bundleConfig, error) {
+	data, err := os.ReadFile(filepath.Join(h.absRoot, appID, "manifest.json"))
+	if err != nil {
+		return nil, fmt.Errorf("manifest not found")
+	}
+	var m appManifest
+	if err := json.Unmarshal(data, &m); err != nil {
+		return nil, fmt.Errorf("invalid manifest")
+	}
+	if m.UI == nil || !m.UI.Enabled {
+		return nil, fmt.Errorf("ui not enabled")
+	}
+	bundle, ok := m.UI.Bundles[bundleID]
+	if !ok {
+		return nil, fmt.Errorf("bundle %q not declared in manifest", bundleID)
+	}
+	return &bundle, nil
+}
 
 type Handler struct {
 	AppsRoot   string
@@ -53,19 +91,31 @@ func (h *Handler) ServeAsset(w http.ResponseWriter, r *http.Request) {
 	var subPath string
 
 	if len(parts) < 2 || parts[1] == "" {
-		// Default to 'web' bundle
 		bundleID = "web"
-		subPath = "index.html"
 	} else {
 		bundleID = parts[1]
 		subPath = strings.Join(parts[2:], "/")
-		if subPath == "" {
-			subPath = "index.html"
-		}
 	}
 
-	// Path traversal protection
+	// Path traversal protection on URL-supplied components
 	if strings.Contains(appID, "..") || strings.Contains(bundleID, "..") || strings.Contains(subPath, "..") {
+		http.Error(w, "invalid path", http.StatusBadRequest)
+		return
+	}
+
+	// Enforce manifest: ui.enabled, declared bundles, path, and entry
+	bundle, err := h.loadBundle(appID, bundleID)
+	if err != nil {
+		http.NotFound(w, r)
+		return
+	}
+
+	if subPath == "" {
+		subPath = bundle.Entry
+	}
+
+	// Re-check after manifest entry substitution
+	if strings.Contains(subPath, "..") {
 		http.Error(w, "invalid path", http.StatusBadRequest)
 		return
 	}
@@ -77,7 +127,13 @@ func (h *Handler) ServeAsset(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	filePath := filepath.Join(h.AppsRoot, appID, "static", bundleID, subPath)
+	// Enforce manifest required_role
+	if bundle.RequiredRole != "" && role != bundle.RequiredRole {
+		http.Error(w, "forbidden", http.StatusForbidden)
+		return
+	}
+
+	filePath := filepath.Join(h.AppsRoot, appID, bundle.Path, subPath)
 
 	// Verify it's within AppsRoot
 	absPath, err := filepath.Abs(filePath)

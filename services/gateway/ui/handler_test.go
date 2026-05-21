@@ -2,6 +2,7 @@ package ui
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -13,20 +14,31 @@ import (
 	"belgrade-os/gateway/redis"
 )
 
-func TestServeAssetRBAC(t *testing.T) {
-	// Setup mock apps dir
-	tmpDir := "test_apps"
-	os.MkdirAll(filepath.Join(tmpDir, "shopping/static/web"), 0755)
-	defer os.RemoveAll(tmpDir)
-	os.WriteFile(filepath.Join(tmpDir, "shopping/static/web/index.html"), []byte("<html></html>"), 0644)
+// writeManifest creates a manifest.json for appID in root with the given bundle config.
+func writeManifest(t *testing.T, root, appID string, cfg map[string]bundleConfig) {
+	t.Helper()
+	m := appManifest{UI: &uiConfig{Enabled: true, Bundles: cfg}}
+	data, err := json.Marshal(m)
+	if err != nil {
+		t.Fatalf("marshal manifest: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(root, appID, "manifest.json"), data, 0644); err != nil {
+		t.Fatalf("write manifest: %v", err)
+	}
+}
 
-	// Mock Redis with permission
-	rClient, _ := redis.NewRedisClient("redis://localhost:6379")
-	// Note: We expect Redis to be running or this will skip in requireRedis style, 
-	// but for unit tests we should ideally mock the Redis calls. 
-	// Since our redis.RedisClient is a struct wrapping the actual client, 
-	// I'll assume we test against a real local Redis if available.
-	
+func TestServeAssetRBAC(t *testing.T) {
+	tmpDir := t.TempDir()
+	os.MkdirAll(filepath.Join(tmpDir, "shopping/static/web"), 0755)
+	os.WriteFile(filepath.Join(tmpDir, "shopping/static/web/index.html"), []byte("<html></html>"), 0644)
+	writeManifest(t, tmpDir, "shopping", map[string]bundleConfig{
+		"web": {Path: "static/web", Entry: "index.html"},
+	})
+
+	rClient, err := redis.NewRedisClient("redis://localhost:6379")
+	if err != nil {
+		t.Skip("Redis unavailable")
+	}
 	ctx := context.Background()
 	rClient.RDB.HSet(ctx, "perms:user1", "shopping:web", "admin").Result()
 	defer rClient.RDB.Del(ctx, "perms:user1")
@@ -71,7 +83,6 @@ func TestServeAssetRBAC(t *testing.T) {
 }
 
 func TestPathContainmentUsesRelNotPrefix(t *testing.T) {
-	// Create two sibling directories: appsRoot and appsRoot-evil
 	parent := t.TempDir()
 	appsRoot := filepath.Join(parent, "apps")
 	appsEvil := filepath.Join(parent, "apps-evil")
@@ -81,13 +92,10 @@ func TestPathContainmentUsesRelNotPrefix(t *testing.T) {
 
 	h := NewHandler(appsRoot, nil, "http://gateway")
 
-	// Verify that strings.HasPrefix would have allowed this path (demonstrating the old bug)
 	evilPath := filepath.Join(appsEvil, "secret.txt")
 	if !strings.HasPrefix(evilPath, appsRoot) {
 		t.Skip("sibling dir doesn't share prefix on this OS — test not applicable")
 	}
-	// Now verify our handler correctly rejects the escape.
-	// filepath.Rel should return a path starting with ".." for anything outside absRoot.
 	rel, err := filepath.Rel(h.absRoot, evilPath)
 	if err != nil {
 		t.Fatalf("filepath.Rel failed: %v", err)
@@ -99,8 +107,10 @@ func TestPathContainmentUsesRelNotPrefix(t *testing.T) {
 
 func TestDirectoryRequestReturns404(t *testing.T) {
 	tmpDir := t.TempDir()
-	// Create a directory (no index.html) inside the app static dir
 	os.MkdirAll(filepath.Join(tmpDir, "shopping/static/web/assets"), 0755)
+	writeManifest(t, tmpDir, "shopping", map[string]bundleConfig{
+		"web": {Path: "static/web", Entry: "index.html"},
+	})
 
 	rClient, err := redis.NewRedisClient("redis://localhost:6379")
 	if err != nil {
@@ -112,7 +122,6 @@ func TestDirectoryRequestReturns404(t *testing.T) {
 
 	h := NewHandler(tmpDir, rClient, "http://gateway")
 
-	// Request a path that resolves to a directory (assets/ with no trailing file)
 	req := httptest.NewRequest("GET", "/ui/shopping/web/assets", nil)
 	req = req.WithContext(context.WithValue(req.Context(), auth.ClaimsKey, &auth.Claims{UserID: "user1"}))
 	w := httptest.NewRecorder()
@@ -133,4 +142,118 @@ func TestHandlerAbsRootComputedAtConstruction(t *testing.T) {
 	if h.absRoot != expected {
 		t.Errorf("absRoot = %q, want %q", h.absRoot, expected)
 	}
+}
+
+func TestServeAssetManifestEnforcement(t *testing.T) {
+	tmpDir := t.TempDir()
+	os.MkdirAll(filepath.Join(tmpDir, "shopping/static/web"), 0755)
+	os.WriteFile(filepath.Join(tmpDir, "shopping/static/web/index.html"), []byte("<html></html>"), 0644)
+
+	rClient, err := redis.NewRedisClient("redis://localhost:6379")
+	if err != nil {
+		t.Skip("Redis unavailable")
+	}
+	ctx := context.Background()
+	rClient.RDB.HSet(ctx, "perms:user1", "shopping:web", "admin")
+	defer rClient.RDB.Del(ctx, "perms:user1")
+
+	h := NewHandler(tmpDir, rClient, "http://gateway")
+
+	t.Run("Missing manifest returns 404", func(t *testing.T) {
+		req := httptest.NewRequest("GET", "/ui/shopping/web/index.html", nil)
+		req = req.WithContext(context.WithValue(req.Context(), auth.ClaimsKey, &auth.Claims{UserID: "user1"}))
+		w := httptest.NewRecorder()
+		h.ServeAsset(w, req)
+		if w.Code != http.StatusNotFound {
+			t.Errorf("expected 404, got %d", w.Code)
+		}
+	})
+
+	t.Run("UI disabled returns 404", func(t *testing.T) {
+		m := appManifest{UI: &uiConfig{Enabled: false, Bundles: map[string]bundleConfig{
+			"web": {Path: "static/web", Entry: "index.html"},
+		}}}
+		data, _ := json.Marshal(m)
+		os.WriteFile(filepath.Join(tmpDir, "shopping/manifest.json"), data, 0644)
+		defer os.Remove(filepath.Join(tmpDir, "shopping/manifest.json"))
+
+		req := httptest.NewRequest("GET", "/ui/shopping/web/index.html", nil)
+		req = req.WithContext(context.WithValue(req.Context(), auth.ClaimsKey, &auth.Claims{UserID: "user1"}))
+		w := httptest.NewRecorder()
+		h.ServeAsset(w, req)
+		if w.Code != http.StatusNotFound {
+			t.Errorf("expected 404 when ui disabled, got %d", w.Code)
+		}
+	})
+
+	t.Run("Undeclared bundle returns 404", func(t *testing.T) {
+		writeManifest(t, tmpDir, "shopping", map[string]bundleConfig{
+			"web": {Path: "static/web", Entry: "index.html"},
+		})
+		defer os.Remove(filepath.Join(tmpDir, "shopping/manifest.json"))
+
+		req := httptest.NewRequest("GET", "/ui/shopping/mobile/index.html", nil)
+		req = req.WithContext(context.WithValue(req.Context(), auth.ClaimsKey, &auth.Claims{UserID: "user1"}))
+		w := httptest.NewRecorder()
+		h.ServeAsset(w, req)
+		if w.Code != http.StatusNotFound {
+			t.Errorf("expected 404 for undeclared bundle, got %d", w.Code)
+		}
+	})
+
+	t.Run("required_role enforced", func(t *testing.T) {
+		writeManifest(t, tmpDir, "shopping", map[string]bundleConfig{
+			"web": {Path: "static/web", Entry: "index.html", RequiredRole: "superadmin"},
+		})
+		defer os.Remove(filepath.Join(tmpDir, "shopping/manifest.json"))
+
+		// user1 has role "admin" from Redis, but manifest requires "superadmin"
+		req := httptest.NewRequest("GET", "/ui/shopping/web/index.html", nil)
+		req = req.WithContext(context.WithValue(req.Context(), auth.ClaimsKey, &auth.Claims{UserID: "user1"}))
+		w := httptest.NewRecorder()
+		h.ServeAsset(w, req)
+		if w.Code != http.StatusForbidden {
+			t.Errorf("expected 403 for role mismatch, got %d", w.Code)
+		}
+	})
+
+	t.Run("required_role passes for matching role", func(t *testing.T) {
+		writeManifest(t, tmpDir, "shopping", map[string]bundleConfig{
+			"web": {Path: "static/web", Entry: "index.html", RequiredRole: "admin"},
+		})
+		defer os.Remove(filepath.Join(tmpDir, "shopping/manifest.json"))
+
+		// user1 has role "admin" — matches required_role
+		req := httptest.NewRequest("GET", "/ui/shopping/web/index.html", nil)
+		req = req.WithContext(context.WithValue(req.Context(), auth.ClaimsKey, &auth.Claims{UserID: "user1"}))
+		w := httptest.NewRecorder()
+		h.ServeAsset(w, req)
+		if w.Code != http.StatusOK {
+			t.Errorf("expected 200 for matching role, got %d", w.Code)
+		}
+	})
+
+	t.Run("bundle entry used as default subpath", func(t *testing.T) {
+		os.MkdirAll(filepath.Join(tmpDir, "shopping/dist/web"), 0755)
+		os.WriteFile(filepath.Join(tmpDir, "shopping/dist/web/app.html"), []byte("<html>app</html>"), 0644)
+		writeManifest(t, tmpDir, "shopping", map[string]bundleConfig{
+			"web": {Path: "dist/web", Entry: "app.html"},
+		})
+		defer func() {
+			os.Remove(filepath.Join(tmpDir, "shopping/manifest.json"))
+			os.RemoveAll(filepath.Join(tmpDir, "shopping/dist"))
+		}()
+
+		// Request with no subpath — should use bundle.Entry = "app.html"
+		req := httptest.NewRequest("GET", "/ui/shopping/web", nil)
+		req = req.WithContext(context.WithValue(req.Context(), auth.ClaimsKey, &auth.Claims{UserID: "user1"}))
+		w := httptest.NewRecorder()
+		h.ServeAsset(w, req)
+		if w.Code != http.StatusOK {
+			t.Errorf("expected 200 using bundle entry, got %d", w.Code)
+		}
+		if !strings.Contains(w.Body.String(), "BELGRADE_CONFIG") {
+			t.Error("config not injected into bundle entry file")
+		}
+	})
 }
