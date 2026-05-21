@@ -1,81 +1,89 @@
 # Belgrade OS
 
-A distributed personal operating system designed for orchestration on a 2020 Lenovo IdeaPad (i5 10th gen, 12GB RAM, 256GB SSD) running Pop!_OS (headless), featuring a modular, polyglot architecture communicating exclusively via Redis.
-
-## 🏛️ Architecture Overview
-
-Belgrade OS employs a "Redis-as-a-Transport" architecture. Services are decoupled and do not make direct inter-service calls; instead, they communicate using Redis Streams and Pub/Sub.
-
-### Services
-
-| Directory | Language | Role |
-| :--- | :--- | :--- |
-| `services/gateway/` | Go | HTTP entry point, JWT auth, secure UI serving, and RBAC enforcement. |
-| `services/bridge/` | Rust | Capability registry and event broker with write-through Redis persistence. |
-| `services/inference/` | Python | Inference Controller; drives the tool-use loop (supports Claude & Gemini). |
-| `services/runner/` | Python | Resource Runner; consumes tool calls and dispatches to app processes. |
-| `services/platform_controller/` | Python | The OS Kernel; manages app lifecycles and RBAC permission sync. |
-| `services/vault_service/` | Python | Vault Gatekeeper; manages atomic writes to Obsidian knowledge base. |
-| `services/notification/` | Python | Notification Service; dispatches alerts via ntfy.sh/Firebase. |
-| `services/mcp_server/` | Python | MCP Server; exposes Belgrade tools via the Model Context Protocol (JSON-RPC). |
-| `services/watchdog/` | Python | Watchdog; monitors service health and triggers restarts on failure. |
-| `sdk/` | Python | Belgrade SDK; provides decorators and context for rapid app development. |
+A distributed personal operating system for home orchestration, running on a 2020 Lenovo IdeaPad (i5 10th gen, 12GB RAM) with Pop!_OS headless. Services communicate exclusively via Redis — no direct inter-service HTTP calls.
 
 ---
 
-## 🚀 Getting Started
+## Architecture
 
-The easiest way to set up your development environment is using our universal setup script:
+| Service | Language | Role |
+|---|---|---|
+| `services/gateway/` | Go | HTTP entry point — JWT auth, task ingestion, SSE proxy, static UI serving, RBAC |
+| `services/bridge/` | Rust | Capability registry — tool registration, write-through Redis cache, event broker |
+| `services/inference/` | Python | Inference Controller — Claude/Gemini/Ollama tool loop |
+| `services/runner/` | Python | Resource Runner — executes trusted tool calls from apps |
+| `services/platform_controller/` | Python | App lifecycle — process supervision, crash-restart, manifest validation, RBAC sync |
+| `services/vault_service/` | Python | Vault Service — atomic writes to Obsidian via Redis streams |
+| `services/notification/` | Python | Notification Service — ntfy driver, dead-letter queue |
+| `services/mcp_server/` | Python | MCP Server — exposes tools to external agents (Claude Desktop) via JSON-RPC |
+| `services/watchdog/` | Python | Watchdog — monitors service health, restarts crashed processes |
+| `sdk/` | Python | Belgrade SDK — `BelgradeApp` base class for building apps |
 
+Apps live in `apps/` and are supervised by Platform Controller. Each app needs `main.py` (using the SDK) and `manifest.json`.
+
+---
+
+## Setup
+
+**One-time (macOS):**
 ```bash
-chmod +x scripts/setup.sh
-./scripts/setup.sh
+make deps
+cp .env.example .env   # fill in required keys (see below)
+make build             # compiles gateway (Go) and bridge (Rust)
+make proto             # regenerates protobuf code for all services
 ```
 
-This script will check for system prerequisites, set up your Python virtual environment, and build all services.
+**Required `.env` keys:**
+```
+ANTHROPIC_API_KEY=        # or GOOGLE_API_KEY / OLLAMA_BASE_URL
+CF_TUNNEL_TOKEN=          # Cloudflare tunnel token
+DB_PASSWORD=              # Postgres password
+```
 
-### Manual Setup (Alternative)
-If you prefer to run steps manually:
-...
+---
 
-### 3. Environment Configuration
-Create a `.env` file in the root directory (see `.env.example` if available) with:
-- `CF_TUNNEL_TOKEN`
-- `DB_PASSWORD`
-- `ANTHROPIC_API_KEY` or `GOOGLE_API_KEY`
+## Running
 
-### 4. Running the OS
 ```bash
-# 1. Start infrastructure (Redis, Postgres, Tunnel)
+# 1. Start infrastructure (Redis, Postgres, Cloudflare tunnel, Docker socket proxy)
 make dev
 
-# 2. Seed permissions (required for UI access)
+# 2. Seed permissions (first run only)
 python3 scripts/seed_permissions.py
 
-# 3. Start services (In separate terminals or via your process manager)
-# In production, these are managed by the Platform Controller
-cd services/platform_controller && python3 main.py
+# 3. Start all services
+./scripts/start.sh
+
+# Stop all services
+./scripts/stop.sh
 ```
 
-### 5. Running Tests
+Services start in dependency order. Platform Controller auto-discovers and starts apps from `apps/`.
+
+---
+
+## Development
+
 ```bash
-# Run all tests across all services
+# Run all tests
 make test
+
+# Per-service
+cd services/gateway      && go test ./... -v
+cd services/runner       && python3 -m pytest tests/ -v
+cd services/inference    && python3 -m pytest tests/ -v
+cd services/notification && python3 -m pytest tests/ -v
+cd services/bridge       && cargo test
+
+# Wipe generated artifacts
+make clean
 ```
 
 ---
 
-## 🛍️ Developing Apps
-Apps live in the `/apps` directory. Each app needs:
-1.  `main.py`: Using the Belgrade SDK.
-2.  `manifest.json`: Defining metadata and UI capabilities.
-3.  `static/`: Optional folder for web/mobile UI assets.
+## Conventions
 
-To see the system in action, check out the [Demo App Guide](./apps/demo_app/README.md).
-
----
-
-## 📜 Conventions
-- **Proto First:** All message shapes are defined in `proto/belgrade_os.proto`.
-- **Identity First:** `user_id` and `tenant_id` are propagated through every message.
-- **Durable IO:** Apps should never write to disk directly; use `ctx.vault.write()`.
+- **Proto first:** All inter-service message shapes are defined in `proto/belgrade_os.proto` and regenerated with `make proto`.
+- **Identity everywhere:** `user_id` and `tenant_id` are propagated through every message.
+- **No direct disk writes from apps:** use `ctx.vault.write()` — all writes go through the Vault Service.
+- **Redis only for transport:** services never call each other over HTTP; all communication is via Redis streams or Pub/Sub.
