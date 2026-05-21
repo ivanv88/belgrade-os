@@ -134,28 +134,29 @@ at registration time.
 - [x] **Multi-UI Serving**: Gateway `GET /ui/{app_id}/{bundle_id}/...` with per-app config injection.
 - [x] **Vault Service**: Conflict-free Obsidian writes via Redis streams and distributed lock.
 - [x] **RBAC Foundation**: Permission model in Postgres, high-performance Redis cache, permission sync.
-- [x] **Scheduled Tasks (Infrastructure)**: APScheduler cron via Platform Controller `/schedules` CRUD API, persisted to Postgres. SDK integration (`ctx.schedule()`) is Phase 2.
+- [x] **Scheduled Tasks (Infrastructure)**: APScheduler cron via Platform Controller `/schedules` CRUD API, persisted to Postgres.
+- [x] **App-Owned Scheduling**: `ctx.schedule(cron, tool_name, params)` and `ctx.unschedule(schedule_id)` in SDK; Platform Controller consumes `tasks:schedule_ops` stream with UPSERT/DELETE ops, validates cron before persisting.
 - [x] **Multi-tenant DB Isolation**: Per-app Postgres schema (`app_{tenant_id}_{app_id}`) via `AppContext.db`.
 - [x] **Trust Model**: Gateway stamps TRUSTED/UNTRUSTED from JWT identity. Inference enforces UNTRUSTED for all app-owned tasks (defense-in-depth). Tool calls routed to bare-metal runner (TRUSTED) or ephemeral Docker container (UNTRUSTED).
 - [x] **Ephemeral Runner**: Sandboxed Docker execution — seccomp, read-only FS, `--network none`, 30s timeout.
 - [x] **App Action Proxy**: Gateway `POST/GET/PUT/DELETE/PATCH /api/{app_id}/...` — RBAC-checked, header-sanitized reverse proxy via Bridge callback lookup.
 - [x] **Inference Providers**: Claude (Anthropic), Gemini, Ollama (local LLMs via OpenAI-compatible API).
 - [x] **App-Owned Inference Workflows**: `ctx.inference.request/stream/await_result/cancel` — apps drive stateful multi-step AI workflows; cancel key checked at each tool-loop iteration.
+- [x] **Manifest Schema Validation**: `_load_manifest()` validates against `_AppManifest` (Pydantic); rejects apps with invalid JSON or schema violations at startup.
+- [x] **MCP Server** (`services/mcp_server/`): JSON-RPC 2.0 over HTTP; Cloudflare Access JWT → Belgrade JWT OAuth flow; `initialize`, `tools/list`, `tools/call`; tool discovery via Bridge `/v1/tools?mcp=true`; execution via Bridge `/v1/execute`. Port 8083.
+- [x] **Dashboard Shell**: Static iframe shell at `apps/dashboard/` — sidebar nav, app iframe loader, shows `user_id` from injected config. Hardcoded nav (shopping only); no dynamic app discovery.
 
 ### 🚀 Phase 2: First Apps + Platform Hardening (Current)
 
 Focus: validate the platform with real apps, close known gaps before adding new features.
 
-- [ ] **First App (Shopping List / Meal Planner)**: End-to-end validation of the full stack — inference workflows, vault writes, notifications, scheduled tasks.
-- [ ] **Manifest Schema Validation**: `_load_manifest()` currently does raw JSON load with no Pydantic validation. Silent failures at startup are hard to debug. Validate against `AppManifest` and reject apps with invalid manifests.
-- [ ] **Filesystem Hot-Reload**: Platform Controller has explicit `POST /apps/reload` but no filesystem watcher. Add inotify-based watch on `apps/` so edits to `main.py` or `manifest.json` trigger a reload automatically.
-- [ ] **Dashboard Shell**: A unified authenticated entry point listing all apps the user has access to, with launch links and basic status.
-- [ ] **App-Owned Scheduling**: Platform Controller has APScheduler + `/schedules` CRUD API (admin-level). Apps cannot schedule tasks from within a request handler yet. Add `ctx.schedule(cron, tool_name, params)` and `ctx.unschedule(schedule_id)` to the SDK, backed by the existing infrastructure. Example use case: meal planner schedules a shopping reminder when it generates a weekly plan.
+- [ ] **First App (Shopping List)**: `apps/shopping/main.py` is a stub (one tool, no DB, no inference, no vault). Needs a real implementation — inference workflows, vault writes, notifications, scheduled tasks — to validate the full stack end-to-end.
+- [ ] **Filesystem Hot-Reload**: Platform Controller has explicit `POST /apps/reload` and a crash-restart watchdog, but no filesystem watcher. Add inotify-based watch on `apps/` so edits to `main.py` or `manifest.json` trigger a reload automatically.
+- [ ] **Dashboard — Dynamic App Discovery**: Current dashboard has a hardcoded sidebar (`shopping` only). Replace with a call to Platform Controller `/apps` to list running apps and build nav dynamically, with status indicators.
 - [ ] **Firebase Notification Driver**: `services/notification/drivers/` has the interface (`base.py`) and ntfy implementation. Firebase driver would unlock mobile push.
 
 ### 🔮 Phase 3: External Connectivity
 
-- [ ] **MCP Server**: Expose OS tools over the Model Context Protocol so external agents (Claude, ChatGPT) can authenticate and invoke app tools. Bridge `/v1/tools` is the data source; MCP needs the protocol layer, auth, and lazy tool-description loading.
 - [ ] **Standalone App Mode** (Feature 1.1): Documented path for apps that run in their own containers but consume platform services (gateway auth, notifications, inference). Define the networking contract and env vars.
 - [ ] **Platform Connectors**: OAuth-managed connectors for Google Drive, Calendar, Gmail — exposed as tools apps can call via the SDK.
 
