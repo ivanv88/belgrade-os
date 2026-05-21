@@ -33,7 +33,7 @@ DB_URL = _cfg.db_url
 REDIS_URL = _cfg.redis_url
 CONTROLLER_TOKEN = os.getenv("CONTROLLER_API_TOKEN", "")
 SECCOMP_PROFILE = os.getenv("SECCOMP_PROFILE", "/config/seccomp-untrusted.json")
-APPS_ROOT = Path(os.getenv("APPS_ROOT", str(Path(__file__).parent.parent / "apps")))
+APPS_ROOT = Path(os.getenv("APPS_ROOT", str(Path(__file__).parent.parent.parent / "apps")))
 
 _ephemeral_runner = EphemeralRunner(seccomp_profile=SECCOMP_PROFILE, apps_root=APPS_ROOT)
 _bearer = HTTPBearer(auto_error=False)
@@ -424,7 +424,7 @@ async def _untrusted_consumer_loop(redis_url: str) -> None:
 
 # --- FastAPI App ---
 app = FastAPI(title="Belgrade Platform Controller")
-app_supervisor = AppSupervisor(apps_root=Path(__file__).parent.parent / "apps")
+app_supervisor = AppSupervisor(apps_root=APPS_ROOT)
 scheduler_manager = SchedulerManager(bridge_url=_cfg.bridge_url)
 permission_sync = PermissionSyncManager(db_engine=engine, redis_url=REDIS_URL)
 
