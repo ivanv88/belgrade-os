@@ -3,6 +3,11 @@
 An **external app** runs in its own container with its own database, but uses
 platform capabilities (notifications, inference, tool registry) via the bridge.
 
+> **Note:** Apps running under Platform Controller supervision should use the
+> Belgrade SDK (`belgrade_sdk.BelgradeApp`) instead of calling the bridge
+> directly. This document covers the raw HTTP contract for apps running in
+> their own containers outside Platform Controller.
+
 ---
 
 ## What the bridge provides
@@ -13,8 +18,10 @@ platform capabilities (notifications, inference, tool registry) via the bridge.
 | `POST /v1/execute` | Bridge calls this on YOUR app when a tool is invoked |
 | `POST /v1/notify` | Send a notification to a user (requires Bearer token) |
 | `POST /v1/infer` | Trigger inference (requires Bearer token) |
-| `GET /v1/tools` | List all registered tools (debug) |
+| `POST /v1/events/publish` | Publish an event to subscribed apps (requires Bearer token) |
+| `GET /v1/tools` | List all registered tools; `?mcp=true` filters MCP-exposed tools |
 | `GET /v1/apps/:app_id` | Look up callback URL for an app |
+| `GET /v1/notifications/provider` | Returns the active notification driver config |
 
 ---
 
@@ -131,11 +138,14 @@ overridden by the caller.
 
 ## Required environment variables
 
-| Variable | Value | Notes |
+| Variable | Default | Notes |
 |---|---|---|
-| `BEG_OS_APP_ID` | `myapp` | Must match `app_id` in registration |
+| `BEG_OS_APP_ID` | — | Must match `app_id` in registration |
 | `BEG_OS_BRIDGE_URL` | `http://localhost:8081` | Bridge address |
-| `BEG_OS_CALLBACK_URL` | `http://myapp:8000` | Where bridge calls `/execute` |
+| `BEG_OS_CALLBACK_URL` | — | Where bridge calls `/execute` |
+| `BEG_OS_DB_URL` | — | PostgreSQL DSN for `AppContext.db` |
+| `BEG_OS_REDIS_URL` | `redis://localhost:6379` | Redis DSN |
+| `BEG_OS_NOTIFICATION_DRIVER` | `ntfy` | `ntfy` or `firebase` |
 
 ---
 
