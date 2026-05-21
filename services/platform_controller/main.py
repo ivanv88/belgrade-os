@@ -100,11 +100,16 @@ class AppProcess:
                 f"manifest.json for app '{self.app_id}' is not valid JSON: {exc}"
             ) from exc
         try:
-            return _AppManifest.model_validate(data)
+            manifest = _AppManifest.model_validate(data)
         except ValidationError as exc:
             raise ValueError(
                 f"manifest.json for app '{self.app_id}' failed schema validation:\n{exc}"
             ) from exc
+        if manifest.app_id != self.app_id:
+            raise ValueError(
+                f"manifest.json app_id '{manifest.app_id}' does not match directory name '{self.app_id}'"
+            )
+        return manifest
 
     async def start(self):
         manifest = self._load_manifest()

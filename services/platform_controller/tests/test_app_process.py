@@ -109,6 +109,14 @@ def test_load_manifest_raises_on_schema_violation(tmp_path):
         app._load_manifest()
 
 
+def test_load_manifest_raises_when_app_id_mismatches_directory(tmp_path):
+    """_load_manifest raises ValueError when manifest app_id differs from directory name."""
+    (tmp_path / "manifest.json").write_text(json.dumps({"app_id": "other-app"}))
+    app = AppProcess(app_id="shopping", path=tmp_path, port=9001)
+    with pytest.raises(ValueError, match="does not match directory name"):
+        app._load_manifest()
+
+
 def test_start_raises_on_invalid_manifest(tmp_path):
     """AppProcess.start() propagates ValueError from _load_manifest."""
     (tmp_path / "manifest.json").write_text("{{broken json")
