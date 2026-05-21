@@ -343,12 +343,25 @@ async fn handle_register(
 
 async fn handle_publish(
     State(state): State<AppState>,
+    headers: axum::http::HeaderMap,
     Json(event): Json<EventPayload>,
-) -> StatusCode {
+) -> Result<StatusCode, (StatusCode, String)> {
+    let raw_token = extract_bearer(&headers)?;
+
+    let pool = state.pool.as_ref().ok_or((
+        StatusCode::SERVICE_UNAVAILABLE,
+        "Redis not configured".to_string(),
+    ))?;
+
+    let token_app_id = lookup_token(pool, raw_token).await?;
+    if token_app_id != event.app_id {
+        return Err((StatusCode::FORBIDDEN, "app_id does not match token".to_string()));
+    }
+
     let subscribers = state.registry.get_subscribers(&event.topic);
     
     if subscribers.is_empty() {
-        return StatusCode::ACCEPTED;
+        return Ok(StatusCode::ACCEPTED);
     }
 
     let http = state.http.clone();
@@ -371,7 +384,7 @@ async fn handle_publish(
         }
     });
 
-    StatusCode::ACCEPTED
+    Ok(StatusCode::ACCEPTED)
 }
 
 async fn handle_tools(
@@ -825,6 +838,10 @@ mod tests {
     async fn test_publish_delivers_to_subscribers() {
         use wiremock::{matchers::{method, path, body_json}, Mock, MockServer, ResponseTemplate};
 
+        let Some(pool) = try_pool().await else { return };
+        let store: Arc<dyn Store> = Arc::new(crate::store::RedisStore::new_for_test(pool.clone()));
+        let registry = Arc::new(ToolRegistry::new());
+
         let mock_server = MockServer::start().await;
         Mock::given(method("POST"))
             .and(path("/events"))
@@ -840,12 +857,31 @@ mod tests {
             .mount(&mock_server)
             .await;
 
-        let registry = Arc::new(ToolRegistry::new());
         registry.register("receiver", &mock_server.uri(), &[]);
         registry.subscribe("receiver", vec!["test.topic".to_string()]);
 
-        let app = make_router(Arc::clone(&registry));
+        // Register sender to obtain a valid token
+        let app = create_router(Arc::clone(&registry), make_config(), Arc::clone(&store), Some(pool.clone()));
+        let reg_resp = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/v1/register")
+                    .header("content-type", "application/json")
+                    .body(Body::from(serde_json::json!({
+                        "app_id": "sender",
+                        "callback_url": "http://sender:9000",
+                        "tools": []
+                    }).to_string()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let reg_bytes = reg_resp.into_body().collect().await.unwrap().to_bytes();
+        let token = serde_json::from_slice::<serde_json::Value>(&reg_bytes).unwrap()["app_token"]
+            .as_str().unwrap().to_string();
 
+        let app = create_router(Arc::clone(&registry), make_config(), Arc::clone(&store), Some(pool));
         let body = serde_json::json!({
             "topic": "test.topic",
             "payload": {"data": 123},
@@ -859,14 +895,15 @@ mod tests {
                     .method("POST")
                     .uri("/v1/events/publish")
                     .header("content-type", "application/json")
+                    .header("authorization", format!("Bearer {token}"))
                     .body(Body::from(body.to_string()))
                     .unwrap(),
             )
             .await
             .unwrap();
-        
+
         assert_eq!(resp.status(), StatusCode::ACCEPTED);
-        
+
         // Wait for tokio::spawn fan-out
         tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
     }
@@ -1216,15 +1253,12 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_publish_no_subscribers_is_accepted() {
+    async fn test_publish_rejects_missing_auth() {
         let registry = Arc::new(ToolRegistry::new());
-        let app = make_router(Arc::clone(&registry));
+        let app = make_router(registry);
 
         let body = serde_json::json!({
-            "topic": "unknown.topic",
-            "payload": {},
-            "app_id": "sender",
-            "trace_id": "tr1"
+            "topic": "test.topic", "payload": {}, "app_id": "sender", "trace_id": "tr1"
         });
         let resp = app
             .oneshot(
@@ -1232,6 +1266,119 @@ mod tests {
                     .method("POST")
                     .uri("/v1/events/publish")
                     .header("content-type", "application/json")
+                    .body(Body::from(body.to_string()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    #[tokio::test]
+    async fn test_publish_returns_503_without_pool() {
+        let registry = Arc::new(ToolRegistry::new());
+        let app = make_router(registry);
+
+        let body = serde_json::json!({
+            "topic": "test.topic", "payload": {}, "app_id": "sender", "trace_id": "tr1"
+        });
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/v1/events/publish")
+                    .header("content-type", "application/json")
+                    .header("authorization", "Bearer sometoken")
+                    .body(Body::from(body.to_string()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::SERVICE_UNAVAILABLE);
+    }
+
+    #[tokio::test]
+    async fn test_publish_rejects_wrong_app_id() {
+        let Some(pool) = try_pool().await else { return };
+        let store: Arc<dyn Store> = Arc::new(crate::store::RedisStore::new_for_test(pool.clone()));
+        let registry = Arc::new(ToolRegistry::new());
+
+        let reg_resp = create_router(
+            Arc::clone(&registry), make_config(), Arc::clone(&store), Some(pool.clone()),
+        )
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/v1/register")
+                .header("content-type", "application/json")
+                .body(Body::from(serde_json::json!({
+                    "app_id": "myapp",
+                    "callback_url": "http://app:8000",
+                    "tools": []
+                }).to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+        let reg_bytes = reg_resp.into_body().collect().await.unwrap().to_bytes();
+        let token = serde_json::from_slice::<serde_json::Value>(&reg_bytes).unwrap()["app_token"]
+            .as_str().unwrap().to_string();
+
+        let body = serde_json::json!({
+            "topic": "test.topic", "payload": {}, "app_id": "otherapp", "trace_id": "tr1"
+        });
+        let resp = create_router(Arc::clone(&registry), make_config(), Arc::clone(&store), Some(pool))
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/v1/events/publish")
+                    .header("content-type", "application/json")
+                    .header("authorization", format!("Bearer {token}"))
+                    .body(Body::from(body.to_string()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::FORBIDDEN);
+    }
+
+    #[tokio::test]
+    async fn test_publish_no_subscribers_is_accepted() {
+        let Some(pool) = try_pool().await else { return };
+        let store: Arc<dyn Store> = Arc::new(crate::store::RedisStore::new_for_test(pool.clone()));
+        let registry = Arc::new(ToolRegistry::new());
+
+        let reg_resp = create_router(
+            Arc::clone(&registry), make_config(), Arc::clone(&store), Some(pool.clone()),
+        )
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/v1/register")
+                .header("content-type", "application/json")
+                .body(Body::from(serde_json::json!({
+                    "app_id": "sender",
+                    "callback_url": "http://sender:9000",
+                    "tools": []
+                }).to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+        let reg_bytes = reg_resp.into_body().collect().await.unwrap().to_bytes();
+        let token = serde_json::from_slice::<serde_json::Value>(&reg_bytes).unwrap()["app_token"]
+            .as_str().unwrap().to_string();
+
+        let body = serde_json::json!({
+            "topic": "unknown.topic", "payload": {}, "app_id": "sender", "trace_id": "tr1"
+        });
+        let resp = create_router(Arc::clone(&registry), make_config(), Arc::clone(&store), Some(pool))
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/v1/events/publish")
+                    .header("content-type", "application/json")
+                    .header("authorization", format!("Bearer {token}"))
                     .body(Body::from(body.to_string()))
                     .unwrap(),
             )
