@@ -7,7 +7,7 @@ import logging
 import time
 from datetime import datetime
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Dict, List, Literal, Optional
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel, ValidationError
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
@@ -69,6 +69,8 @@ class _AppUIManifest(BaseModel):
 
 class _AppManifest(BaseModel):
     app_id: str
+    runtime: Literal["platform_process", "container"] = "platform_process"
+    endpoint: Optional[str] = None
     name: Optional[str] = None
     ui: Optional[_AppUIManifest] = None
     related_apps: List[str] = []
@@ -172,7 +174,11 @@ class AppSupervisor:
             logger.warning(f"Apps root {self.apps_root} does not exist.")
             return
         for app_dir in self.apps_root.iterdir():
-            if app_dir.is_dir() and (app_dir / "main.py").exists():
+            if not app_dir.is_dir():
+                continue
+            has_main = (app_dir / "main.py").exists()
+            has_manifest = (app_dir / "manifest.json").exists()
+            if has_main or has_manifest:
                 await self.start_app(app_dir.name)
 
     async def start_app(self, app_id: str):
@@ -180,6 +186,18 @@ class AppSupervisor:
             await self.stop_app(app_id)
 
         app_path = self.apps_root / app_id
+
+        # Container apps self-manage their lifecycle — skip process spawning.
+        manifest_path = app_path / "manifest.json"
+        if manifest_path.exists():
+            try:
+                data = json.loads(manifest_path.read_text(encoding="utf-8"))
+                if data.get("runtime") == "container":
+                    logger.info("App %s is a container app — skipping process management", app_id)
+                    return
+            except (json.JSONDecodeError, OSError):
+                pass  # Let AppProcess validate fully below
+
         app_process = AppProcess(app_id, app_path, self.next_port)
         try:
             await app_process.start()

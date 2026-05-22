@@ -288,3 +288,59 @@ def test_start_does_not_inject_mcp_when_no_manifest(tmp_path):
         asyncio.run(app.start())
 
     assert "BEG_OS_MCP_ENABLED" not in captured_env
+
+
+def test_start_app_skips_container_runtime(tmp_path):
+    """AppSupervisor.start_app() does not add a container app to running_apps."""
+    from main import AppSupervisor
+
+    sup = AppSupervisor(apps_root=tmp_path)
+
+    app_dir = tmp_path / "mycontainer"
+    app_dir.mkdir()
+    manifest_data = {"app_id": "mycontainer", "runtime": "container", "endpoint": "http://localhost:9090"}
+    (app_dir / "manifest.json").write_text(json.dumps(manifest_data))
+
+    asyncio.run(sup.start_app("mycontainer"))
+
+    assert "mycontainer" not in sup.running_apps
+
+
+def test_discover_finds_manifest_only_app(tmp_path):
+    """discover_and_start discovers an app that has manifest.json but no main.py."""
+    from main import AppSupervisor
+
+    sup = AppSupervisor(apps_root=tmp_path)
+
+    # Container app: has manifest.json but no main.py
+    app_dir = tmp_path / "containerapp"
+    app_dir.mkdir()
+    manifest_data = {"app_id": "containerapp", "runtime": "container", "endpoint": "http://localhost:9091"}
+    (app_dir / "manifest.json").write_text(json.dumps(manifest_data))
+
+    discovered = []
+    original_start = sup.start_app
+
+    async def tracking_start(app_id):
+        discovered.append(app_id)
+        await original_start(app_id)
+
+    sup.start_app = tracking_start
+
+    asyncio.run(sup.discover_and_start())
+
+    assert "containerapp" in discovered
+
+
+def test_manifest_allows_container_runtime(tmp_path):
+    """_AppManifest accepts runtime='container' with an endpoint."""
+    from main import _AppManifest
+
+    manifest = _AppManifest(
+        app_id="mycontainer",
+        runtime="container",
+        endpoint="http://localhost:9090",
+    )
+
+    assert manifest.runtime == "container"
+    assert manifest.endpoint == "http://localhost:9090"

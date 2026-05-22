@@ -1,7 +1,6 @@
 package ui
 
 import (
-	"encoding/json"
 	"fmt"
 	"net/http"
 	"os"
@@ -9,35 +8,17 @@ import (
 	"strings"
 
 	"belgrade-os/gateway/auth"
+	"belgrade-os/gateway/manifest"
 	"belgrade-os/gateway/redis"
 )
-
-type bundleConfig struct {
-	Path         string `json:"path"`
-	Entry        string `json:"entry"`
-	RequiredRole string `json:"required_role"`
-}
-
-type uiConfig struct {
-	Enabled bool                    `json:"enabled"`
-	Bundles map[string]bundleConfig `json:"bundles"`
-}
-
-type appManifest struct {
-	UI *uiConfig `json:"ui"`
-}
 
 // loadBundle reads manifest.json for appID and returns the config for the
 // requested bundle. Returns an error if the manifest is missing, UI is
 // disabled, or the bundle is not declared.
-func (h *Handler) loadBundle(appID, bundleID string) (*bundleConfig, error) {
-	data, err := os.ReadFile(filepath.Join(h.absRoot, appID, "manifest.json"))
+func (h *Handler) loadBundle(appID, bundleID string) (*manifest.BundleConfig, error) {
+	m, err := manifest.Load(h.absRoot, appID)
 	if err != nil {
 		return nil, fmt.Errorf("manifest not found")
-	}
-	var m appManifest
-	if err := json.Unmarshal(data, &m); err != nil {
-		return nil, fmt.Errorf("invalid manifest")
 	}
 	if m.UI == nil || !m.UI.Enabled {
 		return nil, fmt.Errorf("ui not enabled")

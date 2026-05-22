@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"syscall"
 	"time"
 
@@ -32,7 +33,12 @@ func main() {
 		log.Fatalf("redis ping: %v", err)
 	}
 
-	h := NewHandler(cache, rClient, cfg.CFAudience, auth.LoadTrustedUsers())
+	absAppsRoot, err := filepath.Abs(cfg.AppsRoot)
+	if err != nil {
+		log.Fatalf("cannot resolve APPS_ROOT %q: %v", cfg.AppsRoot, err)
+	}
+
+	h := NewHandler(cache, rClient, cfg.CFAudience, auth.LoadTrustedUsers(), absAppsRoot)
 	uiH := ui.NewHandler(cfg.AppsRoot, rClient, cfg.GatewayURL)
 
 	mux := http.NewServeMux()
@@ -47,7 +53,7 @@ func main() {
 	mux.Handle("GET /ui/", uiMiddleware(http.HandlerFunc(uiH.ServeAsset)))
 
 	// Direct app action routes — auth-gated, RBAC-enforced, no inference stream.
-	proxyH := appproxy.NewHandler(cfg.BridgeURL, rClient)
+	proxyH := appproxy.NewHandler(cfg.BridgeURL, rClient, absAppsRoot)
 	mux.Handle("GET /api/", uiMiddleware(http.HandlerFunc(proxyH.ServeAPI)))
 	mux.Handle("POST /api/", uiMiddleware(http.HandlerFunc(proxyH.ServeAPI)))
 	mux.Handle("PUT /api/", uiMiddleware(http.HandlerFunc(proxyH.ServeAPI)))

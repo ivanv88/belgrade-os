@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"belgrade-os/gateway/auth"
+	"belgrade-os/gateway/manifest"
 	"belgrade-os/gateway/redis"
 )
 
@@ -27,14 +28,16 @@ type AppProxyHandler struct {
 	redis        *redis.RedisClient
 	bridgeClient *http.Client
 	appClient    *http.Client
+	appsRoot     string
 }
 
-func NewHandler(bridgeURL string, rClient *redis.RedisClient) *AppProxyHandler {
+func NewHandler(bridgeURL string, rClient *redis.RedisClient, appsRoot string) *AppProxyHandler {
 	return &AppProxyHandler{
 		bridgeURL:    strings.TrimRight(bridgeURL, "/"),
 		redis:        rClient,
 		bridgeClient: &http.Client{Timeout: 5 * time.Second},
 		appClient:    &http.Client{Timeout: 30 * time.Second},
+		appsRoot:     appsRoot,
 	}
 }
 
@@ -62,6 +65,18 @@ func (h *AppProxyHandler) ServeAPI(w http.ResponseWriter, r *http.Request) {
 	if err := h.checkPermission(r, claims.UserID, appID); err != nil {
 		http.Error(w, "forbidden", http.StatusForbidden)
 		return
+	}
+
+	// Container apps declare their own endpoint in manifest — skip bridge lookup.
+	if h.appsRoot != "" {
+		if m, err := manifest.Load(h.appsRoot, appID); err == nil && m.Runtime == manifest.RuntimeContainer {
+			if m.Endpoint == "" {
+				http.Error(w, "container endpoint not configured", http.StatusBadGateway)
+				return
+			}
+			h.proxyRequest(w, r, buildTargetURL(m.Endpoint, subPath, r.URL.RawQuery), claims.UserID)
+			return
+		}
 	}
 
 	callbackURL, err := h.fetchCallbackURL(r, appID)
@@ -178,4 +193,15 @@ func isHopByHop(header string) bool {
 		}
 	}
 	return false
+}
+
+func buildTargetURL(base, subPath, rawQuery string) string {
+	u := strings.TrimRight(base, "/")
+	if subPath != "" {
+		u = u + "/" + subPath
+	}
+	if rawQuery != "" {
+		u = u + "?" + rawQuery
+	}
+	return u
 }

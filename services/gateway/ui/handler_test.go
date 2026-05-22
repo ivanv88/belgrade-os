@@ -11,13 +11,14 @@ import (
 	"testing"
 
 	"belgrade-os/gateway/auth"
+	"belgrade-os/gateway/manifest"
 	"belgrade-os/gateway/redis"
 )
 
 // writeManifest creates a manifest.json for appID in root with the given bundle config.
-func writeManifest(t *testing.T, root, appID string, cfg map[string]bundleConfig) {
+func writeManifest(t *testing.T, root, appID string, cfg map[string]manifest.BundleConfig) {
 	t.Helper()
-	m := appManifest{UI: &uiConfig{Enabled: true, Bundles: cfg}}
+	m := manifest.Manifest{UI: &manifest.UIConfig{Enabled: true, Bundles: cfg}}
 	data, err := json.Marshal(m)
 	if err != nil {
 		t.Fatalf("marshal manifest: %v", err)
@@ -31,7 +32,7 @@ func TestServeAssetRBAC(t *testing.T) {
 	tmpDir := t.TempDir()
 	os.MkdirAll(filepath.Join(tmpDir, "shopping/static/web"), 0755)
 	os.WriteFile(filepath.Join(tmpDir, "shopping/static/web/index.html"), []byte("<html></html>"), 0644)
-	writeManifest(t, tmpDir, "shopping", map[string]bundleConfig{
+	writeManifest(t, tmpDir, "shopping", map[string]manifest.BundleConfig{
 		"web": {Path: "static/web", Entry: "index.html"},
 	})
 
@@ -108,7 +109,7 @@ func TestPathContainmentUsesRelNotPrefix(t *testing.T) {
 func TestDirectoryRequestReturns404(t *testing.T) {
 	tmpDir := t.TempDir()
 	os.MkdirAll(filepath.Join(tmpDir, "shopping/static/web/assets"), 0755)
-	writeManifest(t, tmpDir, "shopping", map[string]bundleConfig{
+	writeManifest(t, tmpDir, "shopping", map[string]manifest.BundleConfig{
 		"web": {Path: "static/web", Entry: "index.html"},
 	})
 
@@ -170,7 +171,7 @@ func TestServeAssetManifestEnforcement(t *testing.T) {
 	})
 
 	t.Run("UI disabled returns 404", func(t *testing.T) {
-		m := appManifest{UI: &uiConfig{Enabled: false, Bundles: map[string]bundleConfig{
+		m := manifest.Manifest{UI: &manifest.UIConfig{Enabled: false, Bundles: map[string]manifest.BundleConfig{
 			"web": {Path: "static/web", Entry: "index.html"},
 		}}}
 		data, _ := json.Marshal(m)
@@ -187,7 +188,7 @@ func TestServeAssetManifestEnforcement(t *testing.T) {
 	})
 
 	t.Run("Undeclared bundle returns 404", func(t *testing.T) {
-		writeManifest(t, tmpDir, "shopping", map[string]bundleConfig{
+		writeManifest(t, tmpDir, "shopping", map[string]manifest.BundleConfig{
 			"web": {Path: "static/web", Entry: "index.html"},
 		})
 		defer os.Remove(filepath.Join(tmpDir, "shopping/manifest.json"))
@@ -202,7 +203,7 @@ func TestServeAssetManifestEnforcement(t *testing.T) {
 	})
 
 	t.Run("required_role enforced", func(t *testing.T) {
-		writeManifest(t, tmpDir, "shopping", map[string]bundleConfig{
+		writeManifest(t, tmpDir, "shopping", map[string]manifest.BundleConfig{
 			"web": {Path: "static/web", Entry: "index.html", RequiredRole: "superadmin"},
 		})
 		defer os.Remove(filepath.Join(tmpDir, "shopping/manifest.json"))
@@ -218,7 +219,7 @@ func TestServeAssetManifestEnforcement(t *testing.T) {
 	})
 
 	t.Run("required_role passes for matching role", func(t *testing.T) {
-		writeManifest(t, tmpDir, "shopping", map[string]bundleConfig{
+		writeManifest(t, tmpDir, "shopping", map[string]manifest.BundleConfig{
 			"web": {Path: "static/web", Entry: "index.html", RequiredRole: "admin"},
 		})
 		defer os.Remove(filepath.Join(tmpDir, "shopping/manifest.json"))
@@ -236,7 +237,7 @@ func TestServeAssetManifestEnforcement(t *testing.T) {
 	t.Run("bundle entry used as default subpath", func(t *testing.T) {
 		os.MkdirAll(filepath.Join(tmpDir, "shopping/dist/web"), 0755)
 		os.WriteFile(filepath.Join(tmpDir, "shopping/dist/web/app.html"), []byte("<html>app</html>"), 0644)
-		writeManifest(t, tmpDir, "shopping", map[string]bundleConfig{
+		writeManifest(t, tmpDir, "shopping", map[string]manifest.BundleConfig{
 			"web": {Path: "dist/web", Entry: "app.html"},
 		})
 		defer func() {

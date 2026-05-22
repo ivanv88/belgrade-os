@@ -1,14 +1,20 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
+	"io"
 	"net/http"
+	"net/http/httputil"
+	"net/url"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
 
 	"belgrade-os/gateway/auth"
 	belgrade "belgrade-os/gateway/gen"
+	"belgrade-os/gateway/manifest"
 	"belgrade-os/gateway/redis"
 )
 
@@ -29,10 +35,11 @@ type Handler struct {
 	redis        *redis.RedisClient
 	audience     string
 	trustedUsers auth.TrustedSet
+	appsRoot     string
 }
 
-func NewHandler(jwks *auth.JWKSCache, rClient *redis.RedisClient, audience string, trusted auth.TrustedSet) *Handler {
-	return &Handler{auth: jwks, redis: rClient, audience: audience, trustedUsers: trusted}
+func NewHandler(jwks *auth.JWKSCache, rClient *redis.RedisClient, audience string, trusted auth.TrustedSet, appsRoot string) *Handler {
+	return &Handler{auth: jwks, redis: rClient, audience: audience, trustedUsers: trusted, appsRoot: appsRoot}
 }
 
 // CreateTask is a legacy/internal endpoint for direct inference submission.
@@ -52,11 +59,26 @@ func (h *Handler) CreateTask(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	r.Body = http.MaxBytesReader(w, r.Body, 64*1024)
+	bodyBytes, err := io.ReadAll(http.MaxBytesReader(w, r.Body, 64*1024))
+	if err != nil {
+		http.Error(w, "request body too large or unreadable", http.StatusBadRequest)
+		return
+	}
 	var req taskRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	if err := json.Unmarshal(bodyBytes, &req); err != nil {
 		http.Error(w, "invalid JSON", http.StatusBadRequest)
 		return
+	}
+
+	if req.AppID != "" && h.appsRoot != "" {
+		if m, err := manifest.Load(h.appsRoot, req.AppID); err == nil && m.Runtime == manifest.RuntimeContainer {
+			if m.Endpoint == "" {
+				http.Error(w, "container endpoint not configured", http.StatusBadGateway)
+				return
+			}
+			h.proxyContainerTask(w, r, m.Endpoint, claims.UserID, bodyBytes)
+			return
+		}
 	}
 
 	if req.Prompt == "" {
@@ -106,6 +128,32 @@ func (h *Handler) CreateTask(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusAccepted)
 	json.NewEncoder(w).Encode(taskResponse{TaskID: taskID, TraceID: traceID})
+}
+
+func (h *Handler) proxyContainerTask(w http.ResponseWriter, r *http.Request, endpoint, userID string, body []byte) {
+	target := strings.TrimRight(endpoint, "/") + "/v1/tasks"
+	targetURL, err := url.Parse(target)
+	if err != nil {
+		http.Error(w, "invalid container endpoint", http.StatusBadGateway)
+		return
+	}
+	proxy := &httputil.ReverseProxy{
+		Director: func(req *http.Request) {
+			req.URL = targetURL
+			req.Host = targetURL.Host
+			req.Body = io.NopCloser(bytes.NewReader(body))
+			req.ContentLength = int64(len(body))
+			req.Header.Set("X-User-ID", userID)
+			req.Header.Del("Cf-Access-Jwt-Assertion")
+			req.Header.Del("Cookie")
+			req.Header.Del("Authorization")
+		},
+		FlushInterval: -1,
+		ErrorHandler: func(w http.ResponseWriter, r *http.Request, err error) {
+			http.Error(w, "container unavailable", http.StatusBadGateway)
+		},
+	}
+	proxy.ServeHTTP(w, r)
 }
 
 // StreamTask is the subscribe-only SSE endpoint for app-owned inference tasks.
