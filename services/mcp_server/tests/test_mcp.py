@@ -85,6 +85,44 @@ def test_token_valid_cf_jwt_returns_bearer_token(mcp_client):
     assert body["expires_in"] == 3600
 
 
+def test_token_encodes_cf_sub_as_user_id(mcp_client):
+    """Issued Belgrade token must carry the CF JWT sub, not the default user."""
+    import jwt as _jwt
+    client, _ = mcp_client
+    with patch("oauth.validate_cf_jwt", return_value={"sub": "alice@example.com"}):
+        resp = client.post(
+            "/oauth/token",
+            data={"grant_type": "client_credentials"},
+            headers={"CF-Access-Jwt-Assertion": "valid-jwt"},
+        )
+    assert resp.status_code == 200
+    claims = _jwt.decode(
+        resp.json()["access_token"],
+        _TEST_ENV["MCP_JWT_SECRET"],
+        algorithms=["HS256"],
+    )
+    assert claims["user_id"] == "alice@example.com"
+
+
+def test_token_falls_back_to_default_when_sub_absent(mcp_client):
+    """Falls back to MCP_DEFAULT_USER_ID when CF JWT has no sub claim."""
+    import jwt as _jwt
+    client, _ = mcp_client
+    with patch("oauth.validate_cf_jwt", return_value={}):
+        resp = client.post(
+            "/oauth/token",
+            data={"grant_type": "client_credentials"},
+            headers={"CF-Access-Jwt-Assertion": "valid-jwt"},
+        )
+    assert resp.status_code == 200
+    claims = _jwt.decode(
+        resp.json()["access_token"],
+        _TEST_ENV["MCP_JWT_SECRET"],
+        algorithms=["HS256"],
+    )
+    assert claims["user_id"] == _TEST_ENV["MCP_DEFAULT_USER_ID"]
+
+
 def test_mcp_unauthenticated_returns_401(mcp_client):
     client, _ = mcp_client
     resp = client.post(
@@ -172,7 +210,7 @@ def test_mcp_tools_call_routes_to_bridge(mcp_client):
     mock_call.assert_called_once_with(
         "shopping:add-item",
         {"item": "milk"},
-        "ivan",
+        "svc",   # sub from CF JWT used by _make_token
         "default",
     )
 

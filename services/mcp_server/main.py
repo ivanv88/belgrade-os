@@ -42,13 +42,14 @@ async def token_endpoint(request: Request):
         raise HTTPException(status_code=401, detail="missing CF JWT")
 
     try:
-        oauth.validate_cf_jwt(cf_jwt)
+        cf_claims = oauth.validate_cf_jwt(cf_jwt)
     except ValueError:
         raise  # server misconfiguration — propagate as 500
     except Exception:
         raise HTTPException(status_code=401, detail="invalid CF service token")
 
-    token = oauth.issue_token(_MCP_DEFAULT_USER_ID, _MCP_DEFAULT_TENANT_ID)
+    user_id = cf_claims.get("sub") or _MCP_DEFAULT_USER_ID
+    token = oauth.issue_token(user_id, _MCP_DEFAULT_TENANT_ID)
     return {"access_token": token, "token_type": "bearer", "expires_in": 3600}
 
 
