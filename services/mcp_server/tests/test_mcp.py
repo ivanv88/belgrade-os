@@ -169,7 +169,8 @@ def test_mcp_tools_list_returns_bridge_tools(mcp_client):
     assert resp.status_code == 200
     tools = resp.json()["result"]["tools"]
     assert len(tools) == 1
-    assert tools[0]["name"] == "shopping:add-item"
+    # Claude requires tool names matching ^[a-zA-Z0-9_-]{1,64}$ — no colons.
+    assert tools[0]["name"] == "shopping__add-item"
     assert tools[0]["description"] == "Add item to list. Use when buying groceries."
     assert tools[0]["inputSchema"] == {"type": "object", "properties": {"item": {"type": "string"}}}
 
@@ -196,7 +197,7 @@ def test_mcp_tools_call_routes_to_bridge(mcp_client):
             json={
                 "jsonrpc": "2.0",
                 "method": "tools/call",
-                "params": {"name": "shopping:add-item", "arguments": {"item": "milk"}},
+                "params": {"name": "shopping__add-item", "arguments": {"item": "milk"}},
                 "id": 3,
             },
             headers={"Authorization": f"Bearer {token}"},
@@ -225,7 +226,7 @@ def test_mcp_tools_call_unknown_tool_returns_error(mcp_client):
             json={
                 "jsonrpc": "2.0",
                 "method": "tools/call",
-                "params": {"name": "shopping:unknown", "arguments": {}},
+                "params": {"name": "shopping__unknown", "arguments": {}},
                 "id": 4,
             },
             headers={"Authorization": f"Bearer {token}"},

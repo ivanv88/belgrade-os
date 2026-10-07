@@ -19,6 +19,12 @@ _MCP_DEFAULT_USER_ID = _cfg.default_user_id
 _MCP_DEFAULT_TENANT_ID = _cfg.default_tenant_id
 
 
+def _mcp_name(bridge_name: str) -> str:
+    """Bridge names are namespaced `app:tool`; MCP clients (Claude) only accept
+    ^[a-zA-Z0-9_-]{1,64}$, so expose `app__tool` and map back on tools/call."""
+    return bridge_name.replace(":", "__")
+
+
 async def _require_auth(
     credentials: Optional[HTTPAuthorizationCredentials] = Depends(_security),
 ) -> dict:
@@ -87,7 +93,7 @@ async def mcp_handler(
                 else:
                     description += "."
                 mcp_tools.append({
-                    "name": t["name"],
+                    "name": _mcp_name(t["name"]),
                     "description": description,
                     "inputSchema": json.loads(t["input_schema_json"]),
                 })
@@ -102,12 +108,12 @@ async def mcp_handler(
             mcp_tools = await registry.list_mcp_tools()
         except Exception as exc:
             return err(-32603, f"bridge unavailable: {exc}")
-        exposed_names = {t["name"] for t in mcp_tools}
-        if tool_name not in exposed_names:
+        bridge_names = {_mcp_name(t["name"]): t["name"] for t in mcp_tools}
+        if tool_name not in bridge_names:
             return err(-32602, f"tool not found: {tool_name}")
         try:
             result = await registry.call_tool(
-                tool_name,
+                bridge_names[tool_name],
                 arguments,
                 claims.get("user_id", _MCP_DEFAULT_USER_ID),
                 claims.get("tenant_id", _MCP_DEFAULT_TENANT_ID),
