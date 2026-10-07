@@ -152,7 +152,13 @@ class BelgradeApp:
                 logger.error(f"Failed to register with bridge: {e}")
 
     def run(self, host: str = "0.0.0.0", port: int = 9000):
-        """Starts the app server and registers tools."""
+        """Starts the app server and registers tools.
+
+        BEG_OS_PORT (injected by the Platform Controller) takes precedence over
+        `port`: the bridge calls back on the port the controller assigned.
+        """
+        port = int(os.getenv("BEG_OS_PORT", port))
+
         @self.app.on_event("startup")
         async def on_startup():
             if self.db_url:

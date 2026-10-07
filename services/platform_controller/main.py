@@ -2,6 +2,7 @@ import asyncio
 import json
 import os
 import signal
+import sys
 import subprocess
 import logging
 import time
@@ -123,6 +124,7 @@ class AppProcess:
 
         env = os.environ.copy()
         env["BEG_OS_APP_ID"] = self.app_id
+        env["BEG_OS_PORT"] = str(self.port)
         env["BEG_OS_CALLBACK_URL"] = f"http://localhost:{self.port}"
         env["BEG_OS_BRIDGE_URL"] = _cfg.bridge_url
         env["BEG_OS_DB_URL"] = DB_URL
@@ -133,7 +135,7 @@ class AppProcess:
         else:
             env.pop("BEG_OS_MCP_ENABLED", None)
 
-        cmd = ["python3", str(self.path / "main.py")]
+        cmd = [sys.executable, str(self.path / "main.py")]
 
         log_file_path = self.path / "app.log"
         logger.info(
@@ -167,6 +169,8 @@ class AppSupervisor:
     def __init__(self, apps_root: Path):
         self.apps_root = apps_root
         self.running_apps: Dict[str, AppProcess] = {}
+        # Ports are sticky per app_id so restarts keep the bridge callback URL valid.
+        self.app_ports: Dict[str, int] = {}
         self.next_port = 9001
 
     async def discover_and_start(self):
@@ -198,7 +202,17 @@ class AppSupervisor:
             except (json.JSONDecodeError, OSError):
                 pass  # Let AppProcess validate fully below
 
-        app_process = AppProcess(app_id, app_path, self.next_port)
+        # Manifest-only dirs are static UI bundles served by the gateway — no process.
+        # Spawning them would crash-loop under the watchdog.
+        if not (app_path / "main.py").exists():
+            logger.info("App %s has no main.py — skipping process management", app_id)
+            return
+
+        if app_id not in self.app_ports:
+            self.app_ports[app_id] = self.next_port
+            self.next_port += 1
+
+        app_process = AppProcess(app_id, app_path, self.app_ports[app_id])
         try:
             await app_process.start()
         except ValueError as exc:
@@ -206,7 +220,6 @@ class AppSupervisor:
             return
 
         self.running_apps[app_id] = app_process
-        self.next_port += 1
 
     async def stop_app(self, app_id: str):
         if app_id in self.running_apps:

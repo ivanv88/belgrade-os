@@ -344,3 +344,69 @@ def test_manifest_allows_container_runtime(tmp_path):
 
     assert manifest.runtime == "container"
     assert manifest.endpoint == "http://localhost:9090"
+
+
+def test_start_injects_port(tmp_path):
+    """BEG_OS_PORT must match the port in BEG_OS_CALLBACK_URL so the app listens where the bridge calls."""
+    app = AppProcess(app_id="shopping", path=tmp_path, port=9007)
+    captured_env = {}
+
+    def fake_popen(cmd, env, **kwargs):
+        captured_env.update(env)
+        return MagicMock(pid=1234)
+
+    with patch("main.subprocess.Popen", side_effect=fake_popen), \
+         patch("main.open", MagicMock()):
+        asyncio.run(app.start())
+
+    assert captured_env["BEG_OS_PORT"] == "9007"
+    assert captured_env["BEG_OS_CALLBACK_URL"] == "http://localhost:9007"
+
+
+def test_restarted_app_keeps_its_port(tmp_path):
+    """Restarts must not move an app to a new port — its bridge registration would go stale."""
+    from main import AppSupervisor
+    sup = AppSupervisor(apps_root=tmp_path)
+    for name in ("alpha", "beta"):
+        (tmp_path / name).mkdir()
+        (tmp_path / name / "main.py").write_text("# stub")
+
+    async def run():
+        with patch("main.subprocess.Popen", return_value=MagicMock(pid=1)), \
+             patch("main.open", MagicMock()):
+            await sup.start_app("alpha")
+            await sup.start_app("beta")
+            alpha_port = sup.running_apps["alpha"].port
+            await sup.start_app("alpha")  # restart
+            assert sup.running_apps["alpha"].port == alpha_port
+            assert sup.running_apps["beta"].port != alpha_port
+
+    asyncio.run(run())
+
+
+def test_discover_skips_app_without_main_py(tmp_path):
+    """Manifest-only apps (static UI bundles) have no process to run — spawning them crash-loops."""
+    from main import AppSupervisor
+    sup = AppSupervisor(apps_root=tmp_path)
+    ui_only = tmp_path / "dashboard"
+    ui_only.mkdir()
+    (ui_only / "manifest.json").write_text(json.dumps({"app_id": "dashboard"}))
+
+    with patch("main.subprocess.Popen") as mock_popen, \
+         patch("main.open", MagicMock()):
+        asyncio.run(sup.discover_and_start())
+
+    mock_popen.assert_not_called()
+    assert "dashboard" not in sup.running_apps
+
+
+def test_start_runs_app_with_controller_interpreter(tmp_path):
+    """Apps must run in the controller's venv — a bare `python3` resolves to the system interpreter."""
+    import sys
+    app = AppProcess(app_id="shopping", path=tmp_path, port=9001)
+
+    with patch("main.subprocess.Popen", return_value=MagicMock(pid=1)) as mock_popen, \
+         patch("main.open", MagicMock()):
+        asyncio.run(app.start())
+
+    assert mock_popen.call_args.args[0][0] == sys.executable

@@ -88,3 +88,23 @@ def test_shutdown_safe_when_pools_are_none():
             await bapp._redis_pool.aclose()
 
     asyncio.run(simulate_shutdown())  # must not raise
+
+
+def test_run_listens_on_port_injected_by_platform(monkeypatch):
+    """The Platform Controller assigns the port; run() must listen where the bridge will call back."""
+    from unittest.mock import patch
+    monkeypatch.setenv("BEG_OS_PORT", "9123")
+    bapp = BelgradeApp("test_app")
+    with patch("belgrade_sdk.app.uvicorn.run") as mock_run:
+        bapp.run()
+    assert mock_run.call_args.kwargs["port"] == 9123
+
+
+def test_run_uses_explicit_port_when_platform_port_absent(monkeypatch):
+    """Standalone runs (no Platform Controller) keep working with an explicit port."""
+    from unittest.mock import patch
+    monkeypatch.delenv("BEG_OS_PORT", raising=False)
+    bapp = BelgradeApp("test_app")
+    with patch("belgrade_sdk.app.uvicorn.run") as mock_run:
+        bapp.run(port=9555)
+    assert mock_run.call_args.kwargs["port"] == 9555
