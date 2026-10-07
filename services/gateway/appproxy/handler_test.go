@@ -33,7 +33,7 @@ func makeBridge(t *testing.T, appID, callbackURL string) *httptest.Server {
 }
 
 func TestServeAPIReturns401WithoutClaims(t *testing.T) {
-	h := appproxy.NewHandler("http://bridge", nil)
+	h := appproxy.NewHandler("http://bridge", nil, "")
 	req := httptest.NewRequest(http.MethodPost, "/api/shopping/add_item", strings.NewReader(`{}`))
 	w := httptest.NewRecorder()
 	h.ServeAPI(w, req)
@@ -43,7 +43,7 @@ func TestServeAPIReturns401WithoutClaims(t *testing.T) {
 }
 
 func TestServeAPIReturns404ForEmptyAppID(t *testing.T) {
-	h := appproxy.NewHandler("http://bridge", nil)
+	h := appproxy.NewHandler("http://bridge", nil, "")
 	req := injectClaims(httptest.NewRequest(http.MethodPost, "/api/", nil), "user1")
 	w := httptest.NewRecorder()
 	h.ServeAPI(w, req)
@@ -59,7 +59,7 @@ func TestServeAPIReturns403WhenRBACFails(t *testing.T) {
 	}
 	defer rClient.Close()
 
-	h := appproxy.NewHandler("http://bridge", rClient)
+	h := appproxy.NewHandler("http://bridge", rClient, "")
 	req := injectClaims(
 		httptest.NewRequest(http.MethodPost, "/api/shopping/add_item", strings.NewReader(`{}`)),
 		"no-perms-user",
@@ -88,7 +88,7 @@ func TestServeAPIReturns404WhenAppNotRegistered(t *testing.T) {
 	}))
 	defer bridge.Close()
 
-	h := appproxy.NewHandler(bridge.URL, rClient)
+	h := appproxy.NewHandler(bridge.URL, rClient, "")
 	req := injectClaims(
 		httptest.NewRequest(http.MethodPost, "/api/shopping/add_item", strings.NewReader(`{}`)),
 		"user3",
@@ -124,7 +124,7 @@ func TestServeAPIProxiesRequestToApp(t *testing.T) {
 	bridge := makeBridge(t, "shopping", appServer.URL)
 	defer bridge.Close()
 
-	h := appproxy.NewHandler(bridge.URL, rClient)
+	h := appproxy.NewHandler(bridge.URL, rClient, "")
 	req := injectClaims(
 		httptest.NewRequest(http.MethodPost, "/api/shopping/add_item", strings.NewReader(`{"item":"milk"}`)),
 		"user4",
@@ -167,7 +167,7 @@ func TestServeAPIStripsAuthHeaders(t *testing.T) {
 	bridge := makeBridge(t, "shopping", appServer.URL)
 	defer bridge.Close()
 
-	h := appproxy.NewHandler(bridge.URL, rClient)
+	h := appproxy.NewHandler(bridge.URL, rClient, "")
 	req := injectClaims(
 		httptest.NewRequest(http.MethodPost, "/api/shopping/do", nil),
 		"user5",
