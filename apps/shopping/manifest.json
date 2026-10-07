@@ -1,6 +1,7 @@
 {
   "app_id": "shopping",
   "name": "Shopping List",
+  "mcp": true,
   "ui": {
     "enabled": true,
     "bundles": {
