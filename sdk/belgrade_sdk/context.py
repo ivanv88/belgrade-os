@@ -2,18 +2,21 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import re
 import time
 import uuid as _uuid
 from dataclasses import dataclass
 from typing import Any, Optional, Union
 import httpx
-from sqlalchemy.ext.asyncio import AsyncSession, AsyncEngine, async_sessionmaker
+from sqlalchemy.ext.asyncio import AsyncConnection, AsyncSession, AsyncEngine
 from sqlalchemy import text
 from redis.asyncio import Redis
 
 from . import defaults
 
 logger = logging.getLogger(__name__)
+
+_SCHEMA_PART_RE = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
 
 
 class VaultAdapter:
@@ -195,6 +198,7 @@ class AppContext:
         self._redis_pool = redis_pool
         self._notification_driver = notification_driver
         self._db_session: Optional[AsyncSession] = None
+        self._db_conn: Optional[AsyncConnection] = None
 
     @property
     def vault(self) -> VaultAdapter:
@@ -210,11 +214,25 @@ class AppContext:
         if not self._db_engine:
             raise RuntimeError("Database not configured for this app.")
         if not self._db_session:
-            session_factory = async_sessionmaker(self._db_engine, expire_on_commit=False)
-            self._db_session = session_factory()
+            schema_name = None
             if self.tenant_id:
+                # Interpolated into DDL below — identifiers can't be bound parameters.
+                for part in (self.tenant_id, self.app_id):
+                    if not _SCHEMA_PART_RE.match(part):
+                        raise ValueError(f"unsafe identifier for DB schema: {part!r}")
                 schema_name = f"app_{self.tenant_id.replace('-', '_')}_{self.app_id.replace('-', '_')}"
-                await self._db_session.execute(text(f"SET search_path TO {schema_name}, public"))
+            # search_path is per-connection state. Pin the session to one connection for
+            # this context's lifetime: an engine-bound session releases its connection on
+            # every commit, and the next statement could run on a connection another
+            # tenant pointed at its own schema. cleanup() resets it before pool return.
+            self._db_conn = await self._db_engine.connect()
+            if schema_name:
+                # Postgres accepts a search_path naming a missing schema and silently
+                # falls through to public — create it so tables never leak across tenants.
+                await self._db_conn.execute(text(f"CREATE SCHEMA IF NOT EXISTS {schema_name}"))
+                await self._db_conn.execute(text(f"SET search_path TO {schema_name}, public"))
+                await self._db_conn.commit()
+            self._db_session = AsyncSession(bind=self._db_conn, expire_on_commit=False)
         return self._db_session
 
     async def notify(
@@ -325,3 +343,15 @@ class AppContext:
         """Closes the DB session if it was opened. The shared engine and redis pool are NOT closed here."""
         if self._db_session:
             await self._db_session.close()
+            self._db_session = None
+        if self._db_conn:
+            try:
+                await self._db_conn.rollback()
+                await self._db_conn.execute(text("RESET search_path"))
+                await self._db_conn.commit()
+            except Exception:
+                # Never return a connection with unknown search_path to the pool.
+                logger.exception("Failed to reset search_path — discarding connection")
+                await self._db_conn.invalidate()
+            await self._db_conn.close()
+            self._db_conn = None
