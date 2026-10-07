@@ -111,8 +111,10 @@ def _make_pubsub_mock(messages: list) -> AsyncMock:
     mock_pubsub = AsyncMock()
     mock_pubsub.subscribe = AsyncMock()
     mock_pubsub.unsubscribe = AsyncMock()
-    side_effects = messages + [None] * 20
-    mock_pubsub.get_message = AsyncMock(side_effect=side_effects)
+    pending = list(messages)
+    mock_pubsub.get_message = AsyncMock(
+        side_effect=lambda *a, **kw: pending.pop(0) if pending else None
+    )
     return mock_pubsub
 
 

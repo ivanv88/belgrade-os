@@ -13,7 +13,8 @@ deps:
 	             -r services/notification/requirements-dev.txt \
 	             -r services/vault_service/requirements-dev.txt \
 	             -r services/platform_controller/requirements-dev.txt \
-	             -r services/mcp_server/requirements.txt
+	             -r services/mcp_server/requirements.txt \
+	             -r services/watchdog/requirements.txt
 
 # ─── Proto codegen ────────────────────────────────────────────────────────────
 proto: services/gateway/gen/belgrade_os.pb.go services/runner/gen/belgrade_os_pb2.py services/inference/gen/belgrade_os_pb2.py services/notification/gen/belgrade_os_pb2.py sdk/belgrade_sdk/gen/belgrade_os_pb2.py services/vault_service/gen/belgrade_os_pb2.py services/platform_controller/gen/belgrade_os_pb2.py
