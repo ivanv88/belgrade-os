@@ -3,11 +3,9 @@
 #   edge_net    — DMZ (internet-facing): cloudflared only
 #   core_net    — internal: services that need Redis/DB/Docker proxy
 #   compute_net — internal: AI inference workers
-#
-# Application services (gateway, bridge, etc.) require Dockerfiles
-# and will be added as separate service definitions once built.
-
-version: "3.9"
+#   host_net    — publishes Redis/Postgres on 127.0.0.1 for the services,
+#                 which run as host processes (scripts/run-service.sh, systemd).
+#                 Internal networks cannot publish ports, hence the extra network.
 
 networks:
   edge_net:
@@ -21,6 +19,9 @@ networks:
     name: beg-os-compute
     driver: bridge
     internal: true
+  host_net:
+    name: beg-os-host
+    driver: bridge
 
 services:
 
@@ -78,9 +79,12 @@ services:
     volumes:
       - ./data/redis:/data
       - ./config/redis.acl:/usr/local/etc/redis/users.acl:ro
+    ports:
+      - "127.0.0.1:${REDIS_HOST_PORT:-6379}:6379"
     networks:
       - core_net
       - compute_net
+      - host_net
 
   db:
     image: postgres:15-alpine
@@ -102,8 +106,12 @@ services:
       POSTGRES_DB: belgrade_os
     volumes:
       - ./data/postgres:/var/lib/postgresql/data
+    ports:
+      # Not 5432: the Lenovo runs native Postgres clusters there.
+      - "127.0.0.1:${DB_HOST_PORT:-5434}:5432"
     networks:
       - core_net
+      - host_net
 
   # Tecnativa docker-socket-proxy: platform_controller uses this to manage
   # app containers instead of direct docker.sock access.

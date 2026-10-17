@@ -14,7 +14,7 @@ fi
 echo "🇷🇸 Belgrade OS — stopping services"
 
 # Stop in reverse start order (platform_controller first so apps get SIGTERM before bridge dies)
-for name in platform_controller gateway runner inference notification vault_service bridge; do
+for name in platform_controller mcp_server gateway runner inference notification vault_service bridge; do
     pf="run/$name.pid"
     if [ -f "$pf" ]; then
         pid=$(cat "$pf")

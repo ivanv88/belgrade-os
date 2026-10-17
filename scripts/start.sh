@@ -59,35 +59,40 @@ echo "🇷🇸 Belgrade OS — starting services"
 echo ""
 
 # 1. Bridge (Rust binary)
-echo "[1/7] Bridge"
-start_service bridge ./services/bridge/target/release/bridge
-wait_tcp bridge localhost 8081
+echo "[1/8] Bridge"
+start_service bridge ./scripts/run-service.sh bridge
+wait_tcp bridge localhost "${BRIDGE_PORT:-8081}"
 
 # 2. Vault service
-echo "[2/7] Vault service"
-start_service vault_service ./venv/bin/python3 services/vault_service/main.py
+echo "[2/8] Vault service"
+start_service vault_service ./scripts/run-service.sh vault_service
 
 # 3. Notification service
-echo "[3/7] Notification service"
-start_service notification ./venv/bin/python3 services/notification/main.py
+echo "[3/8] Notification service"
+start_service notification ./scripts/run-service.sh notification
 
 # 4. Inference worker
-echo "[4/7] Inference worker"
-start_service inference ./venv/bin/python3 services/inference/main.py
+echo "[4/8] Inference worker"
+start_service inference ./scripts/run-service.sh inference
 
 # 5. Runner
-echo "[5/7] Runner"
-start_service runner ./venv/bin/python3 services/runner/main.py
+echo "[5/8] Runner"
+start_service runner ./scripts/run-service.sh runner
 
 # 6. Gateway (Go binary)
-echo "[6/7] Gateway"
-start_service gateway ./services/gateway/gateway
-wait_tcp gateway localhost "${PORT:-8080}"
+echo "[6/8] Gateway"
+start_service gateway ./scripts/run-service.sh gateway
+wait_tcp gateway localhost "${GATEWAY_PORT:-${PORT:-8080}}"
 
-# 7. Platform controller — last, because it starts app subprocesses
-echo "[7/7] Platform controller"
-start_service platform_controller ./venv/bin/python3 services/platform_controller/main.py
-wait_tcp platform_controller localhost 8000
+# 7. MCP server
+echo "[7/8] MCP server"
+start_service mcp_server ./scripts/run-service.sh mcp_server
+wait_tcp mcp_server localhost "${MCP_PORT:-8083}"
+
+# 8. Platform controller — last, because it starts app subprocesses
+echo "[8/8] Platform controller"
+start_service platform_controller ./scripts/run-service.sh platform_controller
+wait_tcp platform_controller localhost "${CONTROLLER_PORT:-8000}"
 
 echo ""
 echo "✅ All services started. Logs in logs/  PIDs in run/"

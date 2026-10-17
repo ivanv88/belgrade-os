@@ -1,12 +1,15 @@
-.PHONY: proto build test dev start stop clean deps
+.PHONY: proto proto-python build build-docker test dev start stop clean deps deps-python
 
 PROTO_SRC := proto/belgrade_os.proto
-export PATH := $(PATH):$(shell go env GOPATH)/bin
+export PATH := $(PATH):$(shell go env GOPATH 2>/dev/null)/bin
 
-# ─── Dependencies (macOS) ─────────────────────────────────────────────────────
-deps:
+# ─── Dependencies ─────────────────────────────────────────────────────────────
+# deps: macOS toolchains + Python. On Linux hosts use deps-python + build-docker.
+deps: deps-python
 	brew install protobuf go rust
 	go install google.golang.org/protobuf/cmd/protoc-gen-go@latest
+
+deps-python:
 	pip3 install -r sdk/requirements.txt \
 	             -r services/runner/requirements-dev.txt \
 	             -r services/inference/requirements-dev.txt \
@@ -17,8 +20,12 @@ deps:
 	             -r services/watchdog/requirements.txt
 
 # ─── Proto codegen ────────────────────────────────────────────────────────────
-proto: services/gateway/gen/belgrade_os.pb.go services/runner/gen/belgrade_os_pb2.py services/inference/gen/belgrade_os_pb2.py services/notification/gen/belgrade_os_pb2.py sdk/belgrade_sdk/gen/belgrade_os_pb2.py services/vault_service/gen/belgrade_os_pb2.py services/platform_controller/gen/belgrade_os_pb2.py
+proto: services/gateway/gen/belgrade_os.pb.go proto-python
 	@echo "proto codegen complete"
+
+# Python codegen only needs grpc_tools from the venv — no system protoc.
+proto-python: services/runner/gen/belgrade_os_pb2.py services/inference/gen/belgrade_os_pb2.py services/notification/gen/belgrade_os_pb2.py sdk/belgrade_sdk/gen/belgrade_os_pb2.py services/vault_service/gen/belgrade_os_pb2.py services/platform_controller/gen/belgrade_os_pb2.py
+	@echo "python proto codegen complete"
 
 services/gateway/gen/belgrade_os.pb.go: $(PROTO_SRC)
 	mkdir -p services/gateway/gen
@@ -61,8 +68,28 @@ services/platform_controller/gen/belgrade_os_pb2.py: $(PROTO_SRC)
 
 # ─── Build ────────────────────────────────────────────────────────────────────
 build: proto
-	cd services/gateway && go build ./...
+	cd services/gateway && go build -o gateway .
 	cd services/bridge && cargo build --release
+
+# Builds the Go + Rust binaries in throwaway containers — for hosts without the
+# toolchains (the Lenovo). Python proto codegen still runs on the host via `make proto`.
+GO_IMAGE   := golang:1.26-bookworm
+RUST_IMAGE := rust:1-bookworm
+PROTOC_GEN_GO_VERSION := v1.36.11
+
+build-docker:
+	docker run --rm -v $(CURDIR):/src -w /src $(GO_IMAGE) sh -euc '\
+	  apt-get update -qq && apt-get install -y -qq protobuf-compiler >/dev/null && \
+	  go install google.golang.org/protobuf/cmd/protoc-gen-go@$(PROTOC_GEN_GO_VERSION) && \
+	  mkdir -p services/gateway/gen && \
+	  protoc -Iproto --go_out=services/gateway/gen --go_opt=paths=source_relative $(PROTO_SRC) && \
+	  cd services/gateway && CGO_ENABLED=0 go build -o gateway . && \
+	  chown -R $(shell id -u):$(shell id -g) /src/services/gateway'
+	docker run --rm -v $(CURDIR):/src -v beg-os-cargo-registry:/usr/local/cargo/registry \
+	  -w /src/services/bridge $(RUST_IMAGE) sh -euc '\
+	  apt-get update -qq && apt-get install -y -qq protobuf-compiler >/dev/null && \
+	  cargo build --release && \
+	  chown -R $(shell id -u):$(shell id -g) /src/services/bridge/target'
 
 # ─── Test ─────────────────────────────────────────────────────────────────────
 test: proto

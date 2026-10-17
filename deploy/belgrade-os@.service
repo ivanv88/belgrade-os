@@ -1,0 +1,25 @@
+# Template unit: one instance per service, e.g. belgrade-os@bridge.service.
+# @ROOT@ / @USER@ are substituted by scripts/install-systemd.sh.
+[Unit]
+Description=Belgrade OS — %i
+PartOf=belgrade-os.target
+After=network-online.target docker.service
+Wants=network-online.target
+Requires=docker.service
+
+[Service]
+Type=simple
+User=@USER@
+WorkingDirectory=@ROOT@
+ExecStart=@ROOT@/scripts/run-service.sh %i
+Restart=always
+RestartSec=5
+# platform_controller's app subprocesses live in this cgroup and stop with it.
+KillMode=control-group
+TimeoutStopSec=15
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=beg-os-%i
+
+[Install]
+WantedBy=belgrade-os.target

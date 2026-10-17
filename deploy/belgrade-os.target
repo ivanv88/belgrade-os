@@ -1,0 +1,7 @@
+[Unit]
+Description=Belgrade OS services
+After=docker.service
+Requires=docker.service
+
+[Install]
+WantedBy=multi-user.target
