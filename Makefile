@@ -80,6 +80,7 @@ PROTOC_GEN_GO_VERSION := v1.36.11
 build-docker:
 	docker run --rm -v $(CURDIR):/src -w /src $(GO_IMAGE) sh -euc '\
 	  apt-get update -qq && apt-get install -y -qq protobuf-compiler >/dev/null && \
+	  git config --global --add safe.directory /src && \
 	  go install google.golang.org/protobuf/cmd/protoc-gen-go@$(PROTOC_GEN_GO_VERSION) && \
 	  mkdir -p services/gateway/gen && \
 	  protoc -Iproto --go_out=services/gateway/gen --go_opt=paths=source_relative $(PROTO_SRC) && \
