@@ -13,12 +13,13 @@ impl Config {
 
     pub fn from_map<F: Fn(&str) -> Option<String>>(lookup: F) -> Self {
         Self {
-            port: lookup("PORT")
+            port: lookup("BRIDGE_PORT")
+                .or_else(|| lookup("PORT"))
                 .unwrap_or_else(|| "8081".to_string())
                 .parse::<u16>()
                 .unwrap_or_else(|_| {
-                    let raw = lookup("PORT").unwrap_or_default();
-                    panic!("PORT must be a number in 0-65535, got {:?}", raw)
+                    let raw = lookup("BRIDGE_PORT").or_else(|| lookup("PORT")).unwrap_or_default();
+                    panic!("BRIDGE_PORT/PORT must be a number in 0-65535, got {:?}", raw)
                 }),
             ntfy_base_url: lookup("NTFY_BASE_URL")
                 .unwrap_or_else(|| "https://ntfy.sh".to_string()),
@@ -85,6 +86,13 @@ mod tests {
             ("REDIS_URL", "redis://generic:6379"),
         ]));
         assert_eq!(cfg.redis_url, "redis://bridge:pw@localhost:6379");
+    }
+
+    #[test]
+    fn test_bridge_port_takes_precedence() {
+        // start.sh loads one shared .env; a generic PORT meant for the gateway must not move the bridge.
+        let cfg = Config::from_map(lookup(&[("BRIDGE_PORT", "8091"), ("PORT", "8080")]));
+        assert_eq!(cfg.port, 8091);
     }
 
     #[test]

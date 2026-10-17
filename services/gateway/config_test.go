@@ -72,3 +72,12 @@ func TestBridgeURLDefault(t *testing.T) {
 		t.Fatalf("expected default BridgeURL=http://localhost:8081, got %q", cfg.BridgeURL)
 	}
 }
+
+func TestGatewayPortPrecedence(t *testing.T) {
+	// start.sh loads one shared .env; a generic PORT must not override the gateway's own port.
+	t.Setenv("GATEWAY_PORT", "8090")
+	t.Setenv("PORT", "8081")
+	if cfg := LoadConfig(); cfg.Port != "8090" {
+		t.Fatalf("expected GATEWAY_PORT 8090, got %s", cfg.Port)
+	}
+}

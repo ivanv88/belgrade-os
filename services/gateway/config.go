@@ -15,7 +15,7 @@ type Config struct {
 
 func LoadConfig() Config {
 	return Config{
-		Port:           getEnv("PORT", "8080"),
+		Port:           getEnvOr(os.Getenv("GATEWAY_PORT"), getEnv("PORT", "8080")),
 		RedisURL:       getEnvOr(os.Getenv("GATEWAY_REDIS_URL"), getEnv("REDIS_URL", "redis://localhost:6379")),
 		CFTeamDomain:   getEnv("CF_TEAM_DOMAIN", ""),
 		CFAudience:     getEnv("CF_AUDIENCE", ""),
