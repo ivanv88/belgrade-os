@@ -11,7 +11,8 @@ class Config(BaseSettings):
     mcp_jwt_secret: str = Field(default="", validation_alias="MCP_JWT_SECRET")
     cf_team_domain: str = Field(default="", validation_alias="CF_TEAM_DOMAIN")
     cf_mcp_audience: str = Field(default="", validation_alias="CF_MCP_AUDIENCE")
-    model_config = {"env_file": ".env", "populate_by_name": True}
+    # The repo-root .env is shared by every service; take only our own keys.
+    model_config = {"env_file": ".env", "populate_by_name": True, "extra": "ignore"}
 
 
 def load_config() -> Config:

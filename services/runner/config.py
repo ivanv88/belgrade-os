@@ -13,7 +13,8 @@ class Config(BaseSettings):
     worker_id: str = ""
     lease_ttl_s: int = 60
     tool_timeout_s: int = 30
-    model_config = {"env_file": ".env", "populate_by_name": True}
+    # The repo-root .env is shared by every service; take only our own keys.
+    model_config = {"env_file": ".env", "populate_by_name": True, "extra": "ignore"}
 
     @property
     def effective_worker_id(self) -> str:

@@ -14,7 +14,8 @@ class Config(BaseSettings):
         validation_alias=AliasChoices("VAULT_REDIS_URL", "BEG_OS_REDIS_URL"),
     )
     worker_id: str = ""
-    model_config = {"env_file": ".env", "populate_by_name": True}
+    # The repo-root .env is shared by every service; take only our own keys.
+    model_config = {"env_file": ".env", "populate_by_name": True, "extra": "ignore"}
 
     @property
     def effective_worker_id(self) -> str:

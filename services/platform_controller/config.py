@@ -19,7 +19,8 @@ class Config(BaseSettings):
     )
     port: int = Field(default=8000, validation_alias=AliasChoices("CONTROLLER_PORT"))
     worker_id: str = ""
-    model_config = {"env_file": ".env", "populate_by_name": True}
+    # The repo-root .env is shared by every service; take only our own keys.
+    model_config = {"env_file": ".env", "populate_by_name": True, "extra": "ignore"}
 
     @property
     def effective_worker_id(self) -> str:

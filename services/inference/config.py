@@ -18,7 +18,8 @@ class Config(BaseSettings):
     google_api_key: Optional[str] = None
     ollama_base_url: str = "http://localhost:11434"
 
-    model_config = {"env_file": ".env", "populate_by_name": True}
+    # The repo-root .env is shared by every service; take only our own keys.
+    model_config = {"env_file": ".env", "populate_by_name": True, "extra": "ignore"}
 
     @model_validator(mode="after")
     def check_credentials(self) -> "Config":

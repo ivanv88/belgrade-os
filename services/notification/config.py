@@ -13,7 +13,8 @@ class Config(BaseSettings):
     ntfy_topic: str = "belgrade-os"
     notification_driver: str = "ntfy"
     worker_id: str = ""
-    model_config = {"env_file": ".env", "populate_by_name": True}
+    # The repo-root .env is shared by every service; take only our own keys.
+    model_config = {"env_file": ".env", "populate_by_name": True, "extra": "ignore"}
 
     @property
     def effective_worker_id(self) -> str:
