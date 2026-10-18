@@ -104,6 +104,7 @@ test: proto
 	cd services/watchdog && python3 -m pytest tests/ -v
 	cd sdk && python3 -m pytest tests/ -v
 	cd apps/shopping && python3 -m pytest tests/ -v
+	cd tools/mcp_proxy && python3 -m pytest tests/ -v
 	cd services/bridge && cargo test
 
 # ─── Dev infrastructure ───────────────────────────────────────────────────────
