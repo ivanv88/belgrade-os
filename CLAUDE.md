@@ -165,4 +165,4 @@ Redis-dependent tests skip gracefully (`t.Skipf`) when Redis is unreachable. Aut
 - **Storage:** `/mnt/storage`; family data at `/mnt/storage/shares/family/obsidian`
 - **Backup:** weekly `pg_dump` + rsync at `/mnt/storage/backups/backup.sh`
 - **Monitoring:** Dozzle (JSON logs)
-- `/data/postgres`, `/data/redis` — git-ignored, never commit
+- Postgres/Redis data live in Docker named volumes `beg-os-pg-data` / `beg-os-redis-data` (back up Postgres via `pg_dump`)

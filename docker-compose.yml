@@ -23,6 +23,15 @@ networks:
     name: beg-os-host
     driver: bridge
 
+# Named volumes, not bind mounts: redis/db run as fixed non-root uids (999/70)
+# with read_only roots. Docker seeds a named volume with the image's ownership;
+# a host bind-mount dir is owned by root or the host user and they can't write it.
+volumes:
+  redis_data:
+    name: beg-os-redis-data
+  pg_data:
+    name: beg-os-pg-data
+
 services:
 
   # ── Edge tier ─────────────────────────────────────────────────────────────
@@ -77,7 +86,7 @@ services:
       --rename-command FLUSHDB ""
       --rename-command DEBUG ""
     volumes:
-      - ./data/redis:/data
+      - redis_data:/data
       - ./config/redis.acl:/usr/local/etc/redis/users.acl:ro
     ports:
       - "127.0.0.1:${REDIS_HOST_PORT:-6379}:6379"
@@ -105,7 +114,7 @@ services:
       POSTGRES_PASSWORD: ${DB_PASSWORD}
       POSTGRES_DB: belgrade_os
     volumes:
-      - ./data/postgres:/var/lib/postgresql/data
+      - pg_data:/var/lib/postgresql/data
     ports:
       # Not 5432: the Lenovo runs native Postgres clusters there.
       - "127.0.0.1:${DB_HOST_PORT:-5434}:5432"

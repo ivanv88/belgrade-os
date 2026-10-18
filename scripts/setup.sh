@@ -260,7 +260,7 @@ fi
 echo "--- Finalizing Setup ---"
 # .env was already generated at startup via generate_env; no duplicate block needed.
 
-mkdir -p vault logs apps data/postgres data/redis
+mkdir -p vault logs apps
 
 echo ""
 echo "🇷🇸 Belgrade OS is ready!"
