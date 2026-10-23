@@ -1,9 +1,4 @@
-import sys
-from pathlib import Path
-
-# Add SDK to path so we can import it
-sys.path.append(str(Path(__file__).parent.parent.parent / "sdk"))
-
+# belgrade_sdk is on PYTHONPATH — the Platform Controller provides it.
 from belgrade_sdk.app import BelgradeApp
 from belgrade_sdk.context import AppContext
 

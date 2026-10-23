@@ -35,6 +35,8 @@ REDIS_URL = _cfg.redis_url
 CONTROLLER_TOKEN = os.getenv("CONTROLLER_API_TOKEN", "")
 SECCOMP_PROFILE = os.getenv("SECCOMP_PROFILE", "/config/seccomp-untrusted.json")
 APPS_ROOT = Path(os.getenv("APPS_ROOT", str(Path(__file__).parent.parent.parent / "apps")))
+# Apps import belgrade_sdk from here; the controller puts it on each app's PYTHONPATH.
+SDK_ROOT = Path(__file__).resolve().parent.parent.parent / "sdk"
 
 _ephemeral_runner = EphemeralRunner(seccomp_profile=SECCOMP_PROFILE, apps_root=APPS_ROOT)
 _bearer = HTTPBearer(auto_error=False)
@@ -140,6 +142,9 @@ class AppProcess:
         )
 
         env = _app_base_env(os.environ)
+        env["PYTHONPATH"] = os.pathsep.join(
+            [str(SDK_ROOT)] + [p for p in env.get("PYTHONPATH", "").split(os.pathsep) if p]
+        )
         env["BEG_OS_APP_ID"] = self.app_id
         env["BEG_OS_PORT"] = str(self.port)
         env["BEG_OS_CALLBACK_URL"] = f"http://localhost:{self.port}"

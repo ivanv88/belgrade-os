@@ -466,3 +466,15 @@ def test_apps_get_the_app_redis_user_not_the_controllers(tmp_path):
 
     assert env["BEG_OS_REDIS_URL"] == "redis://app:apppw@localhost:6379"
     assert "APP_REDIS_URL" not in env
+
+
+def test_apps_can_import_the_sdk(tmp_path):
+    """Apps import belgrade_sdk; the controller provides it on PYTHONPATH rather than
+    every app patching sys.path (demo_app crash-looped on ModuleNotFoundError)."""
+    from main import SDK_ROOT
+    env = _start_and_capture_env(tmp_path, {"PYTHONPATH": "/repo"})
+
+    entries = env["PYTHONPATH"].split(os.pathsep)
+    assert str(SDK_ROOT) in entries
+    assert "/repo" in entries
+    assert (SDK_ROOT / "belgrade_sdk" / "__init__.py").exists()
