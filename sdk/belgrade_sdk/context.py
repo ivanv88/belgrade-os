@@ -230,6 +230,16 @@ class AppContext:
                 # Postgres accepts a search_path naming a missing schema and silently
                 # falls through to public — create it so tables never leak across tenants.
                 await self._db_conn.execute(text(f"CREATE SCHEMA IF NOT EXISTS {schema_name}"))
+                # With per-app DB roles another app could have created (squatted) this
+                # schema first; as its owner it could read everything we write there.
+                owned = (await self._db_conn.execute(
+                    text("SELECT pg_get_userbyid(nspowner) = current_user "
+                         "FROM pg_namespace WHERE nspname = :s"),
+                    {"s": schema_name},
+                )).scalar_one()
+                if not owned:
+                    await self._db_conn.rollback()
+                    raise PermissionError(f"schema {schema_name} is owned by another role")
                 await self._db_conn.execute(text(f"SET search_path TO {schema_name}, public"))
                 await self._db_conn.commit()
             self._db_session = AsyncSession(bind=self._db_conn, expire_on_commit=False)

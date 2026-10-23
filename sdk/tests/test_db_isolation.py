@@ -150,3 +150,55 @@ async def test_tenantless_context_does_not_inherit_previous_tenant_schema():
         async with eng.begin() as conn:
             await conn.execute(text(f"DROP SCHEMA IF EXISTS app_{a}_isotest CASCADE"))
         await eng.dispose()
+
+
+async def test_refuses_schema_owned_by_another_role(engine):
+    """A schema squatted by another app's role must not be used — its owner could read our rows."""
+    tenant = f"t{uuid.uuid4().hex[:8]}"
+    squatter = f"squat{uuid.uuid4().hex[:8]}"
+    schema = f"app_{tenant}_isotest"
+    try:
+        async with engine.begin() as conn:
+            await conn.execute(text(f"CREATE ROLE {squatter}"))
+            await conn.execute(text(f"CREATE SCHEMA {schema} AUTHORIZATION {squatter}"))
+        ctx = _ctx(engine, tenant)
+        with pytest.raises(PermissionError, match=schema):
+            await ctx.db
+        await ctx.cleanup()
+    finally:
+        async with engine.begin() as conn:
+            await conn.execute(text(f"DROP SCHEMA IF EXISTS {schema} CASCADE"))
+            await conn.execute(text(f"DROP ROLE IF EXISTS {squatter}"))
+
+
+async def test_refused_schema_does_not_leak_pooled_connection():
+    """After a refused (squatted) schema, cleanup() must return the connection so the pool is usable."""
+    eng = create_async_engine(TEST_DB_URL, pool_size=1, max_overflow=0, pool_timeout=5)
+    try:
+        async with eng.connect() as conn:
+            await conn.execute(text("SELECT 1"))
+    except Exception as exc:
+        await eng.dispose()
+        pytest.skip(f"Postgres unreachable at {TEST_DB_URL}: {exc}")
+
+    bad, good = (f"t{uuid.uuid4().hex[:8]}" for _ in range(2))
+    squatter = f"squat{uuid.uuid4().hex[:8]}"
+    try:
+        async with eng.begin() as conn:
+            await conn.execute(text(f"CREATE ROLE {squatter}"))
+            await conn.execute(text(f"CREATE SCHEMA app_{bad}_isotest AUTHORIZATION {squatter}"))
+        ctx_bad = _ctx(eng, bad)
+        with pytest.raises(PermissionError):
+            await ctx_bad.db
+        await ctx_bad.cleanup()
+
+        ctx_good = _ctx(eng, good)
+        schema = (await (await ctx_good.db).execute(text("SELECT current_schema()"))).scalar_one()
+        await ctx_good.cleanup()
+        assert schema == f"app_{good}_isotest"
+    finally:
+        async with eng.begin() as conn:
+            for t in (bad, good):
+                await conn.execute(text(f"DROP SCHEMA IF EXISTS app_{t}_isotest CASCADE"))
+            await conn.execute(text(f"DROP ROLE IF EXISTS {squatter}"))
+        await eng.dispose()
