@@ -69,6 +69,9 @@ async def test_app_role_is_not_superuser_and_owns_only_its_schemas(admin_engine)
     db = make_url(TEST_DB_URL).database
     plat = f"platform_only_{suffix}"
     try:
+        async with admin_engine.begin() as conn:
+            # Simulate a PG <= 14 style ACL: ensure_app_role must close this itself.
+            await conn.execute(text("GRANT CREATE ON SCHEMA public TO PUBLIC"))
         for app_id, role in ((a, role_a), (b, role_b)):
             async with admin_engine.begin() as conn:
                 await ensure_app_role(conn, role, app_role_password("s", app_id), db)
@@ -103,6 +106,7 @@ async def test_app_role_is_not_superuser_and_owns_only_its_schemas(admin_engine)
     finally:
         async with admin_engine.begin() as conn:
             await conn.execute(text(f"DROP SCHEMA IF EXISTS {plat} CASCADE"))
+            await conn.execute(text("REVOKE CREATE ON SCHEMA public FROM PUBLIC"))
         for role in (role_a, role_b):
             await _drop_role(admin_engine, role)
 
@@ -116,13 +120,29 @@ async def test_rotating_the_secret_updates_the_password(admin_engine):
             await ensure_app_role(conn, role, app_role_password("old", app_id), db)
             await ensure_app_role(conn, role, app_role_password("new", app_id), db)
         eng = create_async_engine(app_db_url(TEST_DB_URL, role, app_role_password("new", app_id)))
+        old = create_async_engine(app_db_url(TEST_DB_URL, role, app_role_password("old", app_id)))
         try:
             async with eng.connect() as conn:
                 assert (await conn.execute(text("SELECT current_user"))).scalar_one() == role
+            try:
+                async with old.connect() as conn:
+                    await conn.execute(text("SELECT 1"))
+            except Exception as exc:
+                assert "password" in str(exc).lower()
+            else:
+                pytest.skip("Postgres not enforcing password auth")
         finally:
             await eng.dispose()
+            await old.dispose()
     finally:
         await _drop_role(admin_engine, role)
+
+
+async def test_ensure_app_role_rejects_unsafe_role_names():
+    pw = app_role_password("s", "x")
+    for bad in ("app_Zzv", "postgres", "app_", "app_x; DROP ROLE y", "app_" + "a" * 60):
+        with pytest.raises(ValueError):
+            await ensure_app_role(None, bad, pw, "belgrade_test")
 
 
 async def test_password_is_stored_as_scram_verifier(admin_engine):

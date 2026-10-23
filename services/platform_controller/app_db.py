@@ -25,6 +25,7 @@ from sqlalchemy.engine import make_url
 from sqlalchemy.ext.asyncio import AsyncConnection
 
 _APP_ID_RE = re.compile(r"^[a-z0-9_]{1,59}$")   # "app_" + 59 = 63, Postgres' identifier limit
+_ROLE_RE = re.compile(r"^app_[a-z0-9_]{1,59}$")  # lowercase only: inlined unquoted
 _DB_NAME_RE = re.compile(r"^[A-Za-z0-9_]{1,63}$")
 _PASSWORD_RE = re.compile(r"^[0-9a-f]{64}$")
 _VERIFIER_RE = re.compile(
@@ -64,7 +65,7 @@ def app_db_url(platform_url: str, role: str, password: str) -> str:
 async def ensure_app_role(conn: AsyncConnection, role: str, password: str, database: str) -> None:
     """Create or update the app's role. Identifiers/password are validated, then inlined:
     CREATE/ALTER ROLE and GRANT are utility statements and take no bind parameters."""
-    if not role.startswith("app_") or not _DB_NAME_RE.match(role):
+    if not _ROLE_RE.match(role):
         raise ValueError(f"invalid role {role!r}")
     if not _PASSWORD_RE.match(password):
         raise ValueError("password must be a derived 64-char hex digest")
@@ -87,4 +88,5 @@ async def ensure_app_role(conn: AsyncConnection, role: str, password: str, datab
         f"NOBYPASSRLS CONNECTION LIMIT 10 PASSWORD '{verifier}'"
     )
     await conn.execute(text(f"GRANT CONNECT, CREATE ON DATABASE {quoted_db} TO {role}"))
+    # Cluster-wide, idempotent hardening re-applied on every provision (clusters upgraded from PG <= 14).
     await conn.execute(text("REVOKE CREATE ON SCHEMA public FROM PUBLIC"))
