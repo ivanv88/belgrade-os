@@ -8,7 +8,7 @@ import logging
 import time
 from datetime import datetime
 from pathlib import Path
-from typing import Dict, List, Literal, Optional
+from typing import Dict, List, Literal, Mapping, Optional
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel, ValidationError
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
@@ -80,6 +80,23 @@ class _AppManifest(BaseModel):
 
 
 # --- App Supervision ---
+# Apps are less trusted than the platform. The controller's environment holds every
+# platform secret (MCP_JWT_SECRET, CF_TUNNEL_TOKEN, per-service Redis passwords, ...),
+# so apps get an allowlist instead of a copy: process basics, the BEG_OS_* namespace
+# meant for apps, and the values AppProcess.start() sets explicitly.
+_APP_ENV_PASSTHROUGH = frozenset({
+    "PATH", "HOME", "USER", "LOGNAME", "LANG", "LC_ALL", "LC_CTYPE", "TZ", "TMPDIR",
+    "PYTHONPATH", "PYTHONUNBUFFERED",
+})
+
+
+def _app_base_env(parent: Mapping[str, str]) -> Dict[str, str]:
+    return {
+        k: v for k, v in parent.items()
+        if k in _APP_ENV_PASSTHROUGH or k.startswith("BEG_OS_")
+    }
+
+
 class AppProcess:
     def __init__(self, app_id: str, path: Path, port: int):
         self.app_id = app_id
@@ -122,7 +139,7 @@ class AppProcess:
             or os.getenv("BEG_OS_NOTIFICATION_DRIVER", "ntfy")
         )
 
-        env = os.environ.copy()
+        env = _app_base_env(os.environ)
         env["BEG_OS_APP_ID"] = self.app_id
         env["BEG_OS_PORT"] = str(self.port)
         env["BEG_OS_CALLBACK_URL"] = f"http://localhost:{self.port}"

@@ -410,3 +410,59 @@ def test_start_runs_app_with_controller_interpreter(tmp_path):
         asyncio.run(app.start())
 
     assert mock_popen.call_args.args[0][0] == sys.executable
+
+
+_PLATFORM_SECRETS = {
+    "MCP_JWT_SECRET": "s1",
+    "CF_TUNNEL_TOKEN": "s2",
+    "DB_PASSWORD": "s3",
+    "CONTROLLER_API_TOKEN": "s4",
+    "CONTROLLER_REDIS_URL": "redis://controller:s5@localhost:6379",
+    "BRIDGE_REDIS_URL": "redis://bridge:s6@localhost:6379",
+    "ANTHROPIC_API_KEY": "s7",
+}
+
+
+def _start_and_capture_env(tmp_path, parent_env: dict) -> dict:
+    app = AppProcess(app_id="shopping", path=tmp_path, port=9001)
+    captured_env = {}
+
+    def fake_popen(cmd, env, **kwargs):
+        captured_env.update(env)
+        return MagicMock(pid=1)
+
+    with patch("main.subprocess.Popen", side_effect=fake_popen), \
+         patch("main.open", MagicMock()), \
+         patch.dict(os.environ, parent_env, clear=False):
+        asyncio.run(app.start())
+    return captured_env
+
+
+def test_platform_secrets_are_not_passed_to_apps(tmp_path):
+    """Apps are less trusted than the platform: a buggy app or compromised dependency
+    must not be able to mint MCP tokens, hijack the tunnel or act as another service."""
+    env = _start_and_capture_env(tmp_path, _PLATFORM_SECRETS)
+
+    leaked = sorted(k for k in _PLATFORM_SECRETS if k in env)
+    assert leaked == []
+    assert not any(v in env.values() for v in _PLATFORM_SECRETS.values())
+
+
+def test_apps_get_process_basics_and_the_beg_os_namespace(tmp_path):
+    env = _start_and_capture_env(tmp_path, {
+        "PATH": "/usr/bin", "HOME": "/home/ivan", "BEG_OS_VAULT_PATH": "/vault",
+    })
+
+    assert env["PATH"] == "/usr/bin"
+    assert env["HOME"] == "/home/ivan"
+    assert env["BEG_OS_VAULT_PATH"] == "/vault"
+    assert env["BEG_OS_APP_ID"] == "shopping"
+
+
+def test_apps_get_the_app_redis_user_not_the_controllers(tmp_path):
+    env = _start_and_capture_env(tmp_path, {
+        **_PLATFORM_SECRETS, "APP_REDIS_URL": "redis://app:apppw@localhost:6379",
+    })
+
+    assert env["BEG_OS_REDIS_URL"] == "redis://app:apppw@localhost:6379"
+    assert "APP_REDIS_URL" not in env
