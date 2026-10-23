@@ -27,6 +27,9 @@ KEYCHAIN_ACCOUNT = "belgrade-mcp"
 # Refresh this long before expiry so a request never races the deadline.
 REFRESH_MARGIN_S = 60
 TIMEOUT_S = 30
+# Cloudflare's Browser Integrity Check blocks the default `Python-urllib/x.y`
+# User-Agent (error 1010) before Access evaluates the service token.
+USER_AGENT = "belgrade-mcp-proxy/1.0"
 
 
 class UpstreamError(Exception):
@@ -91,6 +94,7 @@ class Proxy:
         return self._token
 
     def _post(self, path: str, body: bytes, headers: dict) -> Tuple[int, dict]:
+        headers = {**headers, "User-Agent": USER_AGENT}
         req = urllib.request.Request(self.base_url + path, data=body, headers=headers, method="POST")
         try:
             with urllib.request.urlopen(req, timeout=TIMEOUT_S) as resp:

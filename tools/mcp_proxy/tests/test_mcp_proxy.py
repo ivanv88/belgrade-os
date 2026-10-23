@@ -25,6 +25,7 @@ class FakeBelgrade:
     def __init__(self):
         self.token_calls = 0
         self.mcp_calls: list[dict] = []
+        self.user_agents: list[str] = []
         self.expires_in = 3600
         self.reject_next_mcp_with_401 = False
         fake = self
@@ -43,6 +44,7 @@ class FakeBelgrade:
 
             def do_POST(self):
                 body = self.rfile.read(int(self.headers["content-length"]))
+                fake.user_agents.append(self.headers.get("User-Agent", ""))
                 # Cloudflare Access: every request needs the service token headers.
                 if (self.headers.get("CF-Access-Client-Id"), self.headers.get("CF-Access-Client-Secret")) != ("cid", "csecret"):
                     return self._reply(403, {"detail": "forbidden by Access"})
@@ -165,3 +167,11 @@ def test_credentials_fall_back_to_keychain(monkeypatch):
     monkeypatch.setattr(mcp_proxy, "_keychain", lambda service: f"kc-{service}")
 
     assert mcp_proxy.load_credentials() == ("kc-cf-access-client-id", "kc-cf-access-client-secret")
+
+
+def test_identifies_itself_instead_of_the_default_python_user_agent(fake):
+    """Cloudflare's Browser Integrity Check rejects `Python-urllib/x.y` with error 1010
+    before Access ever sees the service token."""
+    _proxy(fake).handle(_request("initialize"))
+
+    assert fake.user_agents and all(ua.startswith("belgrade-mcp-proxy/") for ua in fake.user_agents)
