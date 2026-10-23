@@ -19,3 +19,14 @@ def test_ignores_other_services_keys_in_shared_env_file(tmp_path):
     env = tmp_path / ".env"
     env.write_text("CF_TUNNEL_TOKEN=x\nAPP_REDIS_URL=redis://app@localhost:6379\nMCP_JWT_SECRET=s\n")
     Config(_env_file=env)
+
+
+def test_host_defaults_to_loopback(monkeypatch):
+    """Internal services must not listen on the LAN unless explicitly configured."""
+    monkeypatch.delenv("MCP_HOST", raising=False)
+    assert Config(_env_file=None).host == "127.0.0.1"
+
+
+def test_host_from_env(monkeypatch):
+    monkeypatch.setenv("MCP_HOST", "172.30.0.1")
+    assert Config(_env_file=None).host == "172.30.0.1"

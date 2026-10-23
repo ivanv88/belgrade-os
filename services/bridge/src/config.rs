@@ -1,5 +1,6 @@
 #[derive(Debug)]
 pub struct Config {
+    pub host: String,
     pub port: u16,
     pub ntfy_base_url: String,
     pub ntfy_topic: String,
@@ -13,6 +14,8 @@ impl Config {
 
     pub fn from_map<F: Fn(&str) -> Option<String>>(lookup: F) -> Self {
         Self {
+            // Loopback by default: /v1/execute and /v1/register are unauthenticated.
+            host: lookup("BRIDGE_HOST").unwrap_or_else(|| "127.0.0.1".to_string()),
             port: lookup("BRIDGE_PORT")
                 .or_else(|| lookup("PORT"))
                 .unwrap_or_else(|| "8081".to_string())
@@ -86,6 +89,19 @@ mod tests {
             ("REDIS_URL", "redis://generic:6379"),
         ]));
         assert_eq!(cfg.redis_url, "redis://bridge:pw@localhost:6379");
+    }
+
+    #[test]
+    fn test_host_defaults_to_loopback() {
+        // The bridge has no auth on /v1/execute and /v1/register — never listen on the LAN by default.
+        let cfg = Config::from_map(lookup(&[]));
+        assert_eq!(cfg.host, "127.0.0.1");
+    }
+
+    #[test]
+    fn test_host_from_env() {
+        let cfg = Config::from_map(lookup(&[("BRIDGE_HOST", "0.0.0.0")]));
+        assert_eq!(cfg.host, "0.0.0.0");
     }
 
     #[test]

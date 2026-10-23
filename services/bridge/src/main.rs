@@ -45,7 +45,7 @@ async fn main() {
     tracing::info!(tools = tool_count, apps = app_count, "registry hydrated");
 
     let store: Arc<dyn Store> = redis_store;
-    let addr = format!("0.0.0.0:{}", cfg.port);
+    let addr = format!("{}:{}", cfg.host, cfg.port);
     let app = router::create_router(Arc::clone(&registry), Arc::clone(&cfg), store, Some(pool));
 
     tracing::info!(port = cfg.port, "capability bridge listening");

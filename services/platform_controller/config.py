@@ -17,6 +17,8 @@ class Config(BaseSettings):
         default="http://localhost:8081",
         validation_alias=AliasChoices("BEG_OS_BRIDGE_URL", "BRIDGE_URL"),
     )
+    # Loopback by default: GET /apps is unauthenticated and nothing off-host needs the API.
+    host: str = Field(default="127.0.0.1", validation_alias=AliasChoices("CONTROLLER_HOST"))
     port: int = Field(default=8000, validation_alias=AliasChoices("CONTROLLER_PORT"))
     worker_id: str = ""
     # The repo-root .env is shared by every service; take only our own keys.

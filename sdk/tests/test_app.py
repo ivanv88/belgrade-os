@@ -108,3 +108,22 @@ def test_run_uses_explicit_port_when_platform_port_absent(monkeypatch):
     with patch("belgrade_sdk.app.uvicorn.run") as mock_run:
         bapp.run(port=9555)
     assert mock_run.call_args.kwargs["port"] == 9555
+
+
+def test_run_listens_on_loopback_by_default(monkeypatch):
+    """Apps are called by the bridge on localhost; their /execute has no auth of its own."""
+    from unittest.mock import patch
+    monkeypatch.delenv("BEG_OS_HOST", raising=False)
+    bapp = BelgradeApp("test_app")
+    with patch("belgrade_sdk.app.uvicorn.run") as mock_run:
+        bapp.run()
+    assert mock_run.call_args.kwargs["host"] == "127.0.0.1"
+
+
+def test_run_host_can_be_overridden_by_platform(monkeypatch):
+    from unittest.mock import patch
+    monkeypatch.setenv("BEG_OS_HOST", "10.0.0.5")
+    bapp = BelgradeApp("test_app")
+    with patch("belgrade_sdk.app.uvicorn.run") as mock_run:
+        bapp.run()
+    assert mock_run.call_args.kwargs["host"] == "10.0.0.5"

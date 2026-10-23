@@ -130,4 +130,4 @@ async def mcp_handler(
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=_cfg.port)
+    uvicorn.run(app, host=_cfg.host, port=_cfg.port)

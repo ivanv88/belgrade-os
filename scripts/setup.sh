@@ -79,7 +79,8 @@ CONTROLLER_API_TOKEN=$(openssl rand -hex 32)
 # Platform controller DB; injected into apps as BEG_OS_DB_URL
 DATABASE_URL=postgresql+asyncpg://laurent:\${DB_PASSWORD}@localhost:\${DB_HOST_PORT}/belgrade_os
 
-# MCP server
+# MCP server — listens on the tunnel network's gateway only (docker-compose edge_net)
+MCP_HOST=172.30.0.1
 MCP_JWT_SECRET=$(openssl rand -hex 32)
 MCP_DEFAULT_TENANT_ID=family
 MCP_DEFAULT_USER_ID=

@@ -151,13 +151,16 @@ class BelgradeApp:
             except Exception as e:
                 logger.error(f"Failed to register with bridge: {e}")
 
-    def run(self, host: str = "0.0.0.0", port: int = 9000):
+    def run(self, host: str = "127.0.0.1", port: int = 9000):
         """Starts the app server and registers tools.
 
         BEG_OS_PORT (injected by the Platform Controller) takes precedence over
         `port`: the bridge calls back on the port the controller assigned.
+        Listens on loopback by default — /execute trusts the user/tenant it is given,
+        so only the bridge on this host may call it. BEG_OS_HOST overrides.
         """
         port = int(os.getenv("BEG_OS_PORT", port))
+        host = os.getenv("BEG_OS_HOST", host)
 
         @self.app.on_event("startup")
         async def on_startup():

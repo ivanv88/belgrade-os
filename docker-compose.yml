@@ -11,6 +11,12 @@ networks:
   edge_net:
     name: beg-os-edge
     driver: bridge
+    # Pinned so mcp_server can listen on exactly this gateway (MCP_HOST=172.30.0.1):
+    # reachable from the tunnel container, not from the LAN.
+    ipam:
+      config:
+        - subnet: 172.30.0.0/24
+          gateway: 172.30.0.1
   core_net:
     name: beg-os-core
     driver: bridge
@@ -50,7 +56,9 @@ services:
     cpus: 0.25
     pids_limit: 64
     extra_hosts:
-      - "host.docker.internal:host-gateway"
+      # edge_net's gateway, where mcp_server listens — not host-gateway (docker0),
+      # so the tunnel reaches only mcp_server, never the loopback-only services.
+      - "host.docker.internal:172.30.0.1"
     environment:
       - TUNNEL_TOKEN=${CF_TUNNEL_TOKEN}
       # `cloudflared tunnel ready` (healthcheck) queries the metrics server;

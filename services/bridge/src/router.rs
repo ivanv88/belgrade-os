@@ -519,6 +519,7 @@ mod tests {
 
     fn make_config() -> Arc<Config> {
         Arc::new(Config {
+            host: "127.0.0.1".to_string(),
             port: 8081,
             ntfy_base_url: "https://ntfy.sh".to_string(),
             ntfy_topic: "test-topic".to_string(),
