@@ -15,8 +15,8 @@ TEST_DB_URL = os.getenv(
 
 def test_role_name_is_prefixed_and_sql_safe():
     assert app_role_name("shopping") == "app_shopping"
-    assert app_role_name("my-app") == "app_my_app"
-    for bad in ("x; DROP ROLE postgres", "", "a" * 60):
+    assert app_role_name("demo_app") == "app_demo_app"
+    for bad in ("my-app", "My_App", "x; DROP ROLE postgres", "", "a" * 60):
         with pytest.raises(ValueError):
             app_role_name(bad)
 
@@ -55,8 +55,11 @@ async def admin_engine():
 
 async def _drop_role(admin_engine, role):
     async with admin_engine.begin() as conn:
-        await conn.execute(text(f"DROP OWNED BY {role} CASCADE"))
-        await conn.execute(text(f"DROP ROLE IF EXISTS {role}"))
+        exists = (await conn.execute(
+            text("SELECT 1 FROM pg_roles WHERE rolname = :r"), {"r": role})).first()
+        if exists:
+            await conn.execute(text(f"DROP OWNED BY {role} CASCADE"))
+            await conn.execute(text(f"DROP ROLE {role}"))
 
 
 async def test_app_role_is_not_superuser_and_owns_only_its_schemas(admin_engine):
@@ -64,6 +67,7 @@ async def test_app_role_is_not_superuser_and_owns_only_its_schemas(admin_engine)
     a, b = f"isoa{suffix}", f"isob{suffix}"
     role_a, role_b = app_role_name(a), app_role_name(b)
     db = make_url(TEST_DB_URL).database
+    plat = f"platform_only_{suffix}"
     try:
         for app_id, role in ((a, role_a), (b, role_b)):
             async with admin_engine.begin() as conn:
@@ -73,8 +77,8 @@ async def test_app_role_is_not_superuser_and_owns_only_its_schemas(admin_engine)
         async with admin_engine.connect() as conn:
             is_super = (await conn.execute(
                 text("SELECT rolsuper FROM pg_roles WHERE rolname = :r"), {"r": role_a})).scalar_one()
-            await conn.execute(text("CREATE SCHEMA IF NOT EXISTS platform_only"))
-            await conn.execute(text("CREATE TABLE IF NOT EXISTS platform_only.secrets (v TEXT)"))
+            await conn.execute(text(f"CREATE SCHEMA {plat}"))
+            await conn.execute(text(f"CREATE TABLE {plat}.secrets (v TEXT)"))
             await conn.commit()
         assert is_super is False
 
@@ -89,13 +93,16 @@ async def test_app_role_is_not_superuser_and_owns_only_its_schemas(admin_engine)
                     await conn.execute(text(f"SELECT * FROM app_t_{a}.items"))
             async with eng_a.connect() as conn:
                 with pytest.raises(Exception, match="permission denied"):
-                    await conn.execute(text("SELECT * FROM platform_only.secrets"))
+                    await conn.execute(text(f"SELECT * FROM {plat}.secrets"))
+            async with eng_a.connect() as conn:
+                with pytest.raises(Exception, match="permission denied"):
+                    await conn.execute(text(f"CREATE TABLE public.t_{suffix} (x int)"))
         finally:
             await eng_a.dispose()
             await eng_b.dispose()
     finally:
         async with admin_engine.begin() as conn:
-            await conn.execute(text("DROP SCHEMA IF EXISTS platform_only CASCADE"))
+            await conn.execute(text(f"DROP SCHEMA IF EXISTS {plat} CASCADE"))
         for role in (role_a, role_b):
             await _drop_role(admin_engine, role)
 
@@ -114,5 +121,60 @@ async def test_rotating_the_secret_updates_the_password(admin_engine):
                 assert (await conn.execute(text("SELECT current_user"))).scalar_one() == role
         finally:
             await eng.dispose()
+    finally:
+        await _drop_role(admin_engine, role)
+
+
+async def test_password_is_stored_as_scram_verifier(admin_engine):
+    app_id = f"scr{uuid.uuid4().hex[:8]}"
+    role = app_role_name(app_id)
+    db = make_url(TEST_DB_URL).database
+    try:
+        async with admin_engine.begin() as conn:
+            await ensure_app_role(conn, role, app_role_password("s", app_id), db)
+        async with admin_engine.connect() as conn:
+            stored = (await conn.execute(
+                text("SELECT rolpassword FROM pg_authid WHERE rolname = :r"), {"r": role})).scalar_one()
+        assert stored.startswith("SCRAM-SHA-256$4096:")
+        assert app_role_password("s", app_id) not in stored
+    finally:
+        await _drop_role(admin_engine, role)
+
+
+async def test_failed_alter_does_not_leak_plaintext_password(admin_engine):
+    suffix = uuid.uuid4().hex[:8]
+    a, b = f"leaka{suffix}", f"leakb{suffix}"
+    role_a, role_b = app_role_name(a), app_role_name(b)
+    pw_a, pw_b = app_role_password("s", a), app_role_password("s", b)
+    db = make_url(TEST_DB_URL).database
+    try:
+        for app_id, role in ((a, role_a), (b, role_b)):
+            async with admin_engine.begin() as conn:
+                await ensure_app_role(conn, role, app_role_password("s", app_id), db)
+        eng_a = create_async_engine(app_db_url(TEST_DB_URL, role_a, pw_a))
+        try:
+            with pytest.raises(Exception) as ei:
+                async with eng_a.begin() as conn:
+                    await ensure_app_role(conn, role_b, pw_b, db)
+            assert "InsufficientPrivilege" in str(ei.value)
+            assert pw_b not in str(ei.value)
+        finally:
+            await eng_a.dispose()
+    finally:
+        for role in (role_a, role_b):
+            await _drop_role(admin_engine, role)
+
+
+async def test_preexisting_superuser_role_is_demoted(admin_engine):
+    app_id = f"sup{uuid.uuid4().hex[:8]}"
+    role = app_role_name(app_id)
+    db = make_url(TEST_DB_URL).database
+    try:
+        async with admin_engine.begin() as conn:
+            await conn.execute(text(f"CREATE ROLE {role} SUPERUSER"))
+            await ensure_app_role(conn, role, app_role_password("s", app_id), db)
+            is_super = (await conn.execute(
+                text("SELECT rolsuper FROM pg_roles WHERE rolname = :r"), {"r": role})).scalar_one()
+        assert is_super is False
     finally:
         await _drop_role(admin_engine, role)
