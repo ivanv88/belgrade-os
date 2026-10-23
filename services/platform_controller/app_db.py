@@ -31,6 +31,9 @@ _PASSWORD_RE = re.compile(r"^[0-9a-f]{64}$")
 _VERIFIER_RE = re.compile(
     r"^SCRAM-SHA-256\$4096:[A-Za-z0-9+/=]+\$[A-Za-z0-9+/=]+:[A-Za-z0-9+/=]+$")
 _SCRAM_ITERATIONS = 4096
+# The SDK sizes its pool below this (sdk/belgrade_sdk/app.py: DB_POOL_SIZE + DB_MAX_OVERFLOW
+# must stay < APP_ROLE_CONNECTION_LIMIT); change them together.
+APP_ROLE_CONNECTION_LIMIT = 10
 
 
 def app_role_name(app_id: str) -> str:
@@ -85,7 +88,7 @@ async def ensure_app_role(conn: AsyncConnection, role: str, password: str, datab
     # mistake the colons inside the SCRAM verifier for one.
     await conn.exec_driver_sql(
         f"ALTER ROLE {role} WITH LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION "
-        f"NOBYPASSRLS CONNECTION LIMIT 10 PASSWORD '{verifier}'"
+        f"NOBYPASSRLS CONNECTION LIMIT {APP_ROLE_CONNECTION_LIMIT} PASSWORD '{verifier}'"
     )
     await conn.execute(text(f"GRANT CONNECT, CREATE ON DATABASE {quoted_db} TO {role}"))
     # Cluster-wide, idempotent hardening re-applied on every provision (clusters upgraded from PG <= 14).

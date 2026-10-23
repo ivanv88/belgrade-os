@@ -17,6 +17,8 @@ from . import defaults
 # The platform gives each app role CONNECTION LIMIT 10 (platform_controller/app_db.py);
 # 9 leaves one spare for psql/debugging. Each ctx.db pins one connection for the request,
 # so callers beyond 9 wait in the pool instead of failing with "too many connections".
+# pool_timeout is the SQLAlchemy default (30s): request #10 waits that long, then errors.
+# Sizing assumes one uvicorn worker per app (each worker would have its own pool).
 DB_POOL_SIZE = 5
 DB_MAX_OVERFLOW = 4
 
