@@ -243,23 +243,31 @@ async def test_family_shopping_schema_name_still_valid(engine):
 async def test_concurrent_first_use_of_new_tenant_all_succeed():
     eng = create_async_engine(TEST_DB_URL, pool_size=8, max_overflow=0, pool_timeout=5)
     try:
-        async with eng.connect() as conn:
-            await conn.execute(text("SELECT 1"))
+        # Pre-warm all 8 pooled connections so the contexts' CREATEs overlap instead of
+        # being staggered by connection setup (which hides the race).
+        warm = [await eng.connect() for _ in range(8)]
+        for c in warm:
+            await c.close()
     except Exception as exc:
         await eng.dispose()
         pytest.skip(f"Postgres unreachable at {TEST_DB_URL}: {exc}")
 
-    tenant = f"t{uuid.uuid4().hex[:8]}"
-    ctxs = [_ctx(eng, tenant) for _ in range(8)]
+    tenants = [f"t{uuid.uuid4().hex[:8]}" for _ in range(5)]
+    ctxs: list[AppContext] = []
     try:
-        results = await asyncio.gather(*(c.db for c in ctxs), return_exceptions=True)
-        errors = [r for r in results if isinstance(r, BaseException)]
-        assert errors == []
+        for tenant in tenants:  # several rounds, each a brand-new tenant
+            round_ctxs = [_ctx(eng, tenant) for _ in range(8)]
+            ctxs.extend(round_ctxs)
+            results = await asyncio.gather(*(c.db for c in round_ctxs), return_exceptions=True)
+            assert [r for r in results if isinstance(r, BaseException)] == []
+            for c in round_ctxs:
+                await c.cleanup()
     finally:
         for c in ctxs:
             await c.cleanup()
         async with eng.begin() as conn:
-            await conn.execute(text(f"DROP SCHEMA IF EXISTS app_{tenant}_isotest CASCADE"))
+            for tenant in tenants:
+                await conn.execute(text(f"DROP SCHEMA IF EXISTS app_{tenant}_isotest CASCADE"))
         await eng.dispose()
 
 
