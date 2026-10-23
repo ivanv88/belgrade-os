@@ -127,3 +127,15 @@ def test_run_host_can_be_overridden_by_platform(monkeypatch):
     with patch("belgrade_sdk.app.uvicorn.run") as mock_run:
         bapp.run()
     assert mock_run.call_args.kwargs["host"] == "10.0.0.5"
+
+
+def test_db_engine_pool_fits_within_app_role_connection_limit():
+    """The platform gives each app role CONNECTION LIMIT 10; the pool must never exceed it."""
+    from unittest.mock import patch
+
+    bapp = BelgradeApp("x")
+    bapp.db_url = "postgresql+asyncpg://u:p@localhost/db"
+    with patch("belgrade_sdk.app.create_async_engine") as create:
+        bapp._create_db_engine()
+    kwargs = create.call_args.kwargs
+    assert kwargs["pool_size"] + kwargs["max_overflow"] <= 10

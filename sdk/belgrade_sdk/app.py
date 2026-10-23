@@ -14,6 +14,12 @@ from .models import RegisterRequest, ToolDefinition, ExecuteRequest, ExecuteResp
 from .context import AppContext
 from . import defaults
 
+# The platform gives each app role CONNECTION LIMIT 10 (platform_controller/app_db.py);
+# 9 leaves one spare for psql/debugging. Each ctx.db pins one connection for the request,
+# so callers beyond 9 wait in the pool instead of failing with "too many connections".
+DB_POOL_SIZE = 5
+DB_MAX_OVERFLOW = 4
+
 logger = logging.getLogger(__name__)
 
 
@@ -151,6 +157,11 @@ class BelgradeApp:
             except Exception as e:
                 logger.error(f"Failed to register with bridge: {e}")
 
+    def _create_db_engine(self) -> AsyncEngine:
+        return create_async_engine(
+            self.db_url, pool_size=DB_POOL_SIZE, max_overflow=DB_MAX_OVERFLOW
+        )
+
     def run(self, host: str = "127.0.0.1", port: int = 9000):
         """Starts the app server and registers tools.
 
@@ -165,7 +176,7 @@ class BelgradeApp:
         @self.app.on_event("startup")
         async def on_startup():
             if self.db_url:
-                self._db_engine = create_async_engine(self.db_url)
+                self._db_engine = self._create_db_engine()
             if self.redis_url:
                 self._redis_pool = AioRedis.from_url(self.redis_url, decode_responses=False)
             await self.register_with_bridge()
