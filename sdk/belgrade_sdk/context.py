@@ -16,7 +16,13 @@ from . import defaults
 
 logger = logging.getLogger(__name__)
 
-_SCHEMA_PART_RE = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
+# Schema name is app_<tenant>_<app>, interpolated into DDL. The mapping must be one-to-one:
+# a tenant without '_' makes the first '_'-segment after "app_" unambiguously the tenant;
+# lowercase only because Postgres folds unquoted identifiers. App ids follow the platform's
+# rule (platform_controller/app_db.py). Never rename ('-' -> '_') — that collides tenants.
+_TENANT_RE = re.compile(r"^[a-z0-9]{1,32}$")
+_APP_ID_RE = re.compile(r"^[a-z0-9_]{1,59}$")
+_PG_IDENTIFIER_MAX = 63  # Postgres silently truncates longer names
 
 
 class VaultAdapter:
@@ -216,33 +222,52 @@ class AppContext:
         if not self._db_session:
             schema_name = None
             if self.tenant_id:
-                # Interpolated into DDL below — identifiers can't be bound parameters.
-                for part in (self.tenant_id, self.app_id):
-                    if not _SCHEMA_PART_RE.match(part):
-                        raise ValueError(f"unsafe identifier for DB schema: {part!r}")
-                schema_name = f"app_{self.tenant_id.replace('-', '_')}_{self.app_id.replace('-', '_')}"
+                if not _TENANT_RE.match(self.tenant_id):
+                    raise ValueError(f"tenant_id not usable in a DB schema name: {self.tenant_id!r}")
+                if not _APP_ID_RE.match(self.app_id):
+                    raise ValueError(f"app_id not usable in a DB schema name: {self.app_id!r}")
+                schema_name = f"app_{self.tenant_id}_{self.app_id}"
+                if len(schema_name) > _PG_IDENTIFIER_MAX:
+                    raise ValueError(
+                        f"DB schema name {schema_name!r} exceeds {_PG_IDENTIFIER_MAX} characters")
             # search_path is per-connection state. Pin the session to one connection for
             # this context's lifetime: an engine-bound session releases its connection on
             # every commit, and the next statement could run on a connection another
             # tenant pointed at its own schema. cleanup() resets it before pool return.
             self._db_conn = await self._db_engine.connect()
-            if schema_name:
-                # Postgres accepts a search_path naming a missing schema and silently
-                # falls through to public — create it so tables never leak across tenants.
-                await self._db_conn.execute(text(f"CREATE SCHEMA IF NOT EXISTS {schema_name}"))
-                # With per-app DB roles another app could have created (squatted) this
-                # schema first; as its owner it could read everything we write there.
-                owned = (await self._db_conn.execute(
-                    text("SELECT pg_get_userbyid(nspowner) = current_user "
-                         "FROM pg_namespace WHERE nspname = :s"),
-                    {"s": schema_name},
-                )).scalar_one()
-                if not owned:
-                    await self._db_conn.rollback()
-                    raise PermissionError(f"schema {schema_name} is owned by another role")
-                await self._db_conn.execute(text(f"SET search_path TO {schema_name}, public"))
-                await self._db_conn.commit()
-            self._db_session = AsyncSession(bind=self._db_conn, expire_on_commit=False)
+            try:
+                if schema_name:
+                    # Serialise first use: concurrent CREATE SCHEMA IF NOT EXISTS raises
+                    # UniqueViolation. Transaction-scoped, released by the commit/rollback below.
+                    await self._db_conn.execute(
+                        text("SELECT pg_advisory_xact_lock(hashtext(:s))"), {"s": schema_name})
+                    # Postgres accepts a search_path naming a missing schema and silently
+                    # falls through to public — create it so tables never leak across tenants.
+                    await self._db_conn.execute(text(f"CREATE SCHEMA IF NOT EXISTS {schema_name}"))
+                    # With per-app DB roles another app could have created (squatted) this
+                    # schema first; as its owner it could read everything we write there.
+                    owner, current = (await self._db_conn.execute(
+                        text("SELECT pg_get_userbyid(nspowner), current_user "
+                             "FROM pg_namespace WHERE nspname = :s"),
+                        {"s": schema_name},
+                    )).one()
+                    if owner != current:
+                        raise PermissionError(
+                            f"schema {schema_name} is owned by role {owner}, not {current}; "
+                            "drop or reassign it")
+                    await self._db_conn.execute(text(f"SET search_path TO {schema_name}, public"))
+                    await self._db_conn.commit()
+                self._db_session = AsyncSession(bind=self._db_conn, expire_on_commit=False)
+            except BaseException:
+                # Don't orphan the pinned connection: a retry would overwrite _db_conn.
+                conn, self._db_conn = self._db_conn, None
+                try:
+                    await conn.rollback()
+                except Exception:
+                    logger.exception("Rollback failed after DB setup error — discarding connection")
+                    await conn.invalidate()
+                await conn.close()
+                raise
         return self._db_session
 
     async def notify(
