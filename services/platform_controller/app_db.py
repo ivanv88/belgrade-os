@@ -80,9 +80,11 @@ async def ensure_app_role(conn: AsyncConnection, role: str, password: str, datab
         text("SELECT 1 FROM pg_roles WHERE rolname = :r"), {"r": role})).first()
     if not exists:
         await conn.execute(text(f"CREATE ROLE {role}"))
-    await conn.execute(text(
+    # exec_driver_sql, not text(): text() parses ":name" as a bind parameter and would
+    # mistake the colons inside the SCRAM verifier for one.
+    await conn.exec_driver_sql(
         f"ALTER ROLE {role} WITH LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION "
         f"NOBYPASSRLS CONNECTION LIMIT 10 PASSWORD '{verifier}'"
-    ))
+    )
     await conn.execute(text(f"GRANT CONNECT, CREATE ON DATABASE {quoted_db} TO {role}"))
     await conn.execute(text("REVOKE CREATE ON SCHEMA public FROM PUBLIC"))
