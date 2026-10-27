@@ -116,8 +116,8 @@ def test_systemd_stop_and_status(tmp_path):
     run = Run(returncode=0)
     runner = SystemdRunner(env_dir=tmp_path, run=run)
 
-    assert runner.is_running("shopping") is True
-    assert runner.pid("shopping") == 1234
+    assert asyncio.run(runner.is_running("shopping")) is True
+    assert asyncio.run(runner.pid("shopping")) == 1234
     asyncio.run(runner.stop("shopping"))
 
     assert SC + ["is-active", UNIT] in run.calls
@@ -126,8 +126,8 @@ def test_systemd_stop_and_status(tmp_path):
 
 def test_systemd_reports_stopped_unit(tmp_path):
     runner = SystemdRunner(env_dir=tmp_path, run=FakeRun(returncode=3, stdout="inactive\n"))
-    assert runner.is_running("shopping") is False
-    assert runner.pid("shopping") is None
+    assert asyncio.run(runner.is_running("shopping")) is False
+    assert asyncio.run(runner.pid("shopping")) is None
 
 
 @pytest.mark.parametrize("state,expected", [
@@ -137,7 +137,7 @@ def test_systemd_reports_stopped_unit(tmp_path):
 def test_systemd_is_running_by_unit_state(tmp_path, state, expected):
     """A unit in systemd's own Restart= backoff reports 'activating'; the watchdog must not pile a restart on top."""
     runner = SystemdRunner(env_dir=tmp_path, run=FakeRun(returncode=0 if state == "active" else 3, stdout=state + "\n"))
-    assert runner.is_running("shopping") is expected
+    assert asyncio.run(runner.is_running("shopping")) is expected
 
 
 def test_subprocess_runner_spawns_and_tracks(tmp_path):
@@ -150,9 +150,9 @@ def test_subprocess_runner_spawns_and_tracks(tmp_path):
 
     assert popen.call_args.kwargs["env"] == {"A": "1"}
     assert popen.call_args.args[0][1] == str(tmp_path / "main.py")
-    assert runner.is_running("shopping") and runner.pid("shopping") == 42
+    assert asyncio.run(runner.is_running("shopping")) and asyncio.run(runner.pid("shopping")) == 42
     proc.poll.return_value = 1
-    assert runner.is_running("shopping") is False
+    assert asyncio.run(runner.is_running("shopping")) is False
 
 
 def test_systemd_start_failure_keeps_stderr(tmp_path):
@@ -184,8 +184,8 @@ def test_systemd_all_calls_are_non_interactive_and_bounded(tmp_path):
     runner = SystemdRunner(env_dir=tmp_path, run=run)
     asyncio.run(runner.start("shopping", tmp_path, {}))
     asyncio.run(runner.stop("shopping"))
-    runner.is_running("shopping")
-    runner.pid("shopping")
+    asyncio.run(runner.is_running("shopping"))
+    asyncio.run(runner.pid("shopping"))
     assert len(run.calls) == 4
     for argv, kw in zip(run.calls, run.kwargs):
         assert argv[:2] == SC
@@ -194,8 +194,8 @@ def test_systemd_all_calls_are_non_interactive_and_bounded(tmp_path):
 
 def test_systemd_timeouts(tmp_path):
     runner = SystemdRunner(env_dir=tmp_path, run=FakeRun(timeout=True))
-    assert runner.is_running("shopping") is False
-    assert runner.pid("shopping") is None
+    assert asyncio.run(runner.is_running("shopping")) is False
+    assert asyncio.run(runner.pid("shopping")) is None
     with pytest.raises(RuntimeError):
         asyncio.run(runner.start("shopping", tmp_path, {}))
     with pytest.raises(RuntimeError):
@@ -241,7 +241,7 @@ def test_subprocess_runner_really_stops_real_process(tmp_path, ignore_term, capl
         proc = runner._procs["shopping"]
         started.append(proc)
         await asyncio.to_thread(_wait_for, ready)
-        assert runner.is_running("shopping")
+        assert await runner.is_running("shopping")
         await runner.stop("shopping")
         return proc
 
@@ -258,7 +258,7 @@ def test_subprocess_runner_really_stops_real_process(tmp_path, ignore_term, capl
     assert proc.poll() is not None
     with pytest.raises(ProcessLookupError):
         os.kill(proc.pid, 0)
-    assert not runner.is_running("shopping") and runner.pid("shopping") is None
+    assert not asyncio.run(runner.is_running("shopping")) and asyncio.run(runner.pid("shopping")) is None
 
 
 def test_subprocess_runner_pid_none_after_exit(tmp_path):
@@ -266,7 +266,7 @@ def test_subprocess_runner_pid_none_after_exit(tmp_path):
     proc.poll.return_value = 0
     runner = SubprocessRunner()
     runner._procs["shopping"] = proc
-    assert runner.pid("shopping") is None
+    assert asyncio.run(runner.pid("shopping")) is None
 
 
 def test_subprocess_runner_closes_log_handle_when_popen_fails(tmp_path):
@@ -288,3 +288,28 @@ def test_subprocess_runner_stop_logs_unexpected_errors(tmp_path, caplog):
          caplog.at_level("ERROR", logger="app_runner"):
         asyncio.run(runner.stop("shopping"))
     assert "nope" in caplog.text
+
+
+def test_systemd_status_calls_do_not_block_the_event_loop(tmp_path):
+    """systemctl can take up to its timeout; it must run off the loop thread."""
+    import threading
+    seen = []
+
+    def run(argv, **kw):
+        seen.append(threading.current_thread())
+        return subprocess.CompletedProcess(argv, 0, stdout="active\n", stderr="")
+
+    runner = SystemdRunner(env_dir=tmp_path, run=run)
+
+    async def go():
+        await runner.is_running("shopping")
+        await runner.pid("shopping")
+        return threading.current_thread()
+
+    loop_thread = asyncio.run(go())
+    assert seen and all(t is not loop_thread for t in seen)
+
+
+def test_runner_isolation_flags():
+    assert SubprocessRunner.isolated is False
+    assert SystemdRunner.isolated is True

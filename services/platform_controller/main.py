@@ -41,6 +41,8 @@ SDK_ROOT = Path(__file__).resolve().parent.parent.parent / "sdk"
 _ephemeral_runner = EphemeralRunner(seccomp_profile=SECCOMP_PROFILE, apps_root=APPS_ROOT)
 _bearer = HTTPBearer(auto_error=False)
 _APP_ID_RE = re.compile(r"^[a-zA-Z0-9_-]{1,64}$")
+# Process-managed apps also get a DB role (app_db.app_role_name): lowercase, no hyphens.
+_RELOAD_APP_ID_RE = re.compile(r"^[a-z0-9_]{1,59}$")
 
 
 def _require_token(
@@ -85,7 +87,7 @@ class _AppManifest(BaseModel):
 # Apps are less trusted than the platform. The controller's environment holds every
 # platform secret (MCP_JWT_SECRET, CF_TUNNEL_TOKEN, per-service Redis passwords, ...),
 # so apps get an allowlist instead of a copy: process basics, the BEG_OS_* namespace
-# meant for apps, and the values AppProcess.start() sets explicitly.
+# meant for apps, and the values AppProcess.build_env() sets explicitly.
 _APP_ENV_PASSTHROUGH = frozenset({
     "PATH", "HOME", "USER", "LOGNAME", "LANG", "LC_ALL", "LC_CTYPE", "TZ", "TMPDIR",
     "PYTHONPATH", "PYTHONUNBUFFERED",
@@ -166,11 +168,6 @@ class AppProcess:
             env.pop("BEG_OS_MCP_ENABLED", None)
         return env
 
-    async def start(self, runner=None, db_url: Optional[str] = None) -> None:
-        await (runner or SubprocessRunner()).start(
-            self.app_id, self.path, self.build_env(db_url or DB_URL)
-        )
-
 
 class AppSupervisor:
     def __init__(
@@ -181,11 +178,20 @@ class AppSupervisor:
     ):
         self.apps_root = apps_root
         self.runner = runner or SubprocessRunner()
+        # A production (isolated) runner must never fall back to the platform's superuser DB URL.
+        if self.runner.isolated and db_url_for_app is None:
+            raise ValueError("an isolating app runner requires db_url_for_app (no superuser DB fallback)")
         self.db_url_for_app = db_url_for_app
         self.running_apps: Dict[str, AppProcess] = {}
+        # Apps whose last start failed; the watchdog keeps retrying them.
+        self.failed_apps: set[str] = set()
+        self._locks: Dict[str, asyncio.Lock] = {}
         # Ports are sticky per app_id so restarts keep the bridge callback URL valid.
         self.app_ports: Dict[str, int] = {}
         self.next_port = 9001
+
+    def _lock(self, app_id: str) -> asyncio.Lock:
+        return self._locks.setdefault(app_id, asyncio.Lock())
 
     async def discover_and_start(self):
         if not self.apps_root.exists():
@@ -197,9 +203,23 @@ class AppSupervisor:
             has_main = (app_dir / "main.py").exists()
             has_manifest = (app_dir / "manifest.json").exists()
             if has_main or has_manifest:
-                await self.start_app(app_dir.name)
+                await self._start_isolated(app_dir.name)
 
-    async def start_app(self, app_id: str):
+    async def _start_isolated(self, app_id: str) -> bool:
+        """start_app, but nothing an app does can escape to its siblings or the caller."""
+        try:
+            return await self.start_app(app_id)
+        except Exception:
+            logger.exception("Unexpected error starting app %s", app_id)
+            self.failed_apps.add(app_id)
+            return False
+
+    async def start_app(self, app_id: str) -> bool:
+        """Start (or restart) an app. True if it is running or needs no process."""
+        async with self._lock(app_id):
+            return await self._start_app_locked(app_id)
+
+    async def _start_app_locked(self, app_id: str) -> bool:
         app_path = self.apps_root / app_id
 
         # Container apps self-manage their lifecycle — skip process spawning.
@@ -209,7 +229,8 @@ class AppSupervisor:
                 data = json.loads(manifest_path.read_text(encoding="utf-8"))
                 if data.get("runtime") == "container":
                     logger.info("App %s is a container app — skipping process management", app_id)
-                    return
+                    self.failed_apps.discard(app_id)
+                    return True
             except (json.JSONDecodeError, OSError):
                 pass  # Let AppProcess validate fully below
 
@@ -217,7 +238,8 @@ class AppSupervisor:
         # Spawning them would crash-loop under the watchdog.
         if not (app_path / "main.py").exists():
             logger.info("App %s has no main.py — skipping process management", app_id)
-            return
+            self.failed_apps.discard(app_id)
+            return True
 
         if app_id not in self.app_ports:
             self.app_ports[app_id] = self.next_port
@@ -226,34 +248,44 @@ class AppSupervisor:
         app_process = AppProcess(app_id, app_path, self.app_ports[app_id])
         try:
             db_url = await self.db_url_for_app(app_id) if self.db_url_for_app else DB_URL
-            env = app_process.build_env(
-                db_url, inherit_identity=not isinstance(self.runner, SystemdRunner)
-            )
+            env = app_process.build_env(db_url, inherit_identity=not self.runner.isolated)
             await self.runner.start(app_id, app_path, env)
-        except (ValueError, RuntimeError) as exc:
+        except (ValueError, RuntimeError, OSError) as exc:
             logger.error("Skipping app %s — %s", app_id, exc)
-            return
+            self.running_apps.pop(app_id, None)
+            self.failed_apps.add(app_id)
+            return False
 
         self.running_apps[app_id] = app_process
+        self.failed_apps.discard(app_id)
+        return True
 
     async def stop_app(self, app_id: str):
-        if app_id in self.running_apps:
-            try:
-                await self.runner.stop(app_id)
-            except RuntimeError as exc:
-                logger.error("Failed to stop app %s — %s", app_id, exc)
-                return  # still running as far as we know; keep it visible
-            del self.running_apps[app_id]
+        async with self._lock(app_id):
+            if app_id in self.running_apps:
+                try:
+                    await self.runner.stop(app_id)
+                except RuntimeError as exc:
+                    logger.error("Failed to stop app %s — %s", app_id, exc)
+                    return  # still running as far as we know; keep it visible
+                del self.running_apps[app_id]
 
     async def _watch_tick(self) -> None:
-        """Check all running apps; restart any that have exited."""
-        dead = [a for a in self.running_apps if not self.runner.is_running(a)]
+        """Restart apps that have exited, and retry apps whose last start failed."""
+        names = list(self.running_apps)
+        alive = await asyncio.gather(
+            *(self.runner.is_running(a) for a in names), return_exceptions=True
+        )
+        dead = [a for a, ok in zip(names, alive) if ok is not True]
+        for app_id, ok in zip(names, alive):
+            if isinstance(ok, Exception):
+                logger.error("status check of app %s failed: %r", app_id, ok)
         for app_id in dead:
             logger.warning("app %s is not running — restarting", app_id)
-            try:
-                await self.start_app(app_id)
-            except Exception:
-                logger.exception("restart of app %s failed", app_id)
+            await self._start_isolated(app_id)
+        for app_id in sorted(self.failed_apps - set(dead)):
+            logger.warning("retrying failed start of app %s", app_id)
+            await self._start_isolated(app_id)
 
     async def watch(self, interval: int = 10) -> None:
         """Background loop: call _watch_tick every `interval` seconds."""
@@ -493,20 +525,29 @@ async def _provision_app_db(app_id: str) -> str:
     return app_db_url(DB_URL, role, password)
 
 
-_runner = (SystemdRunner(env_dir=Path(_cfg.app_env_dir)) if _cfg.app_runner == "systemd"
-           else SubprocessRunner())
-if not _cfg.app_db_secret:
-    logger.warning("APP_DB_SECRET not set — apps share the platform DB user (dev only)")
-if _cfg.app_runner == "systemd" and APPS_ROOT.resolve() != (SDK_ROOT.parent / "apps").resolve():
-    logger.error(
-        "APPS_ROOT %s is not <repo root>/apps — the systemd unit template hard-codes that path",
-        APPS_ROOT,
+def _check_apps_root(runner, apps_root: Path, repo_apps_root: Path) -> None:
+    """The systemd unit template hard-codes <repo root>/apps; a different root would run nothing."""
+    if runner.isolated and Path(apps_root).resolve() != Path(repo_apps_root).resolve():
+        raise RuntimeError(
+            f"APPS_ROOT {apps_root} is not {repo_apps_root} — the systemd unit template hard-codes "
+            "that path; refusing to start with the sandboxed runner"
+        )
+
+
+def _build_supervisor(cfg, apps_root: Path = APPS_ROOT, repo_apps_root: Path = SDK_ROOT.parent / "apps") -> AppSupervisor:
+    runner = (SystemdRunner(env_dir=Path(cfg.app_env_dir)) if cfg.app_runner == "systemd"
+              else SubprocessRunner())
+    _check_apps_root(runner, apps_root, repo_apps_root)
+    if not cfg.app_db_secret:
+        logger.warning("APP_DB_SECRET not set — apps share the platform DB user (dev only)")
+    return AppSupervisor(
+        apps_root=apps_root,
+        runner=runner,
+        db_url_for_app=_provision_app_db if cfg.app_db_secret else None,
     )
-app_supervisor = AppSupervisor(
-    apps_root=APPS_ROOT,
-    runner=_runner,
-    db_url_for_app=_provision_app_db if _cfg.app_db_secret else None,
-)
+
+
+app_supervisor = _build_supervisor(_cfg)
 scheduler_manager = SchedulerManager(bridge_url=_cfg.bridge_url)
 permission_sync = PermissionSyncManager(db_engine=engine, redis_url=REDIS_URL)
 
@@ -571,17 +612,20 @@ async def startup_event():
 
 @app.post("/apps/reload")
 async def reload_app(action: AppAction, _: None = Depends(_require_token)):
-    if not _APP_ID_RE.match(action.app_id):
-        raise HTTPException(status_code=400, detail="invalid app_id: must match ^[a-zA-Z0-9_-]{1,64}$")
-    await app_supervisor.start_app(action.app_id)
+    if not _RELOAD_APP_ID_RE.match(action.app_id):
+        raise HTTPException(status_code=400, detail="invalid app_id: must match ^[a-z0-9_]{1,59}$")
+    if not await app_supervisor.start_app(action.app_id):
+        raise HTTPException(status_code=502, detail=f"app {action.app_id} failed to start; see controller logs")
     return {"status": "reloaded", "app_id": action.app_id}
 
 @app.get("/apps")
 async def list_apps():
-    return {
-        app_id: {"port": proc.port, "pid": app_supervisor.runner.pid(app_id)}
-        for app_id, proc in app_supervisor.running_apps.items()
-    }
+    apps = {}
+    for app_id, proc in list(app_supervisor.running_apps.items()):
+        apps[app_id] = {"port": proc.port, "pid": await app_supervisor.runner.pid(app_id), "status": "running"}
+    for app_id in sorted(app_supervisor.failed_apps):
+        apps[app_id] = {"port": app_supervisor.app_ports.get(app_id), "pid": None, "status": "failed"}
+    return apps
 
 @app.post("/schedules")
 async def create_schedule(entry: ScheduleEntry, _: None = Depends(_require_token)):

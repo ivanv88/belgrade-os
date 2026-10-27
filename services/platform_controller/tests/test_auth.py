@@ -77,7 +77,7 @@ def test_reload_accepts_valid_app_id():
     with patch.object(m.app_supervisor, "start_app", new_callable=AsyncMock):
         resp = client.post(
             "/apps/reload",
-            json={"app_id": "my-app_01"},
+            json={"app_id": "my_app_01"},
             headers={"Authorization": "Bearer test-secret"},
         )
     assert resp.status_code == 200

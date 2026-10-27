@@ -41,6 +41,7 @@ _ENV_VALUE_FORBIDDEN = "\n\r\"\\"
 
 class SubprocessRunner:
     stop_timeout_s: float = 5
+    isolated = False  # shares the controller's user: dev only
 
     def __init__(self) -> None:
         self._procs: Dict[str, subprocess.Popen] = {}
@@ -76,11 +77,11 @@ class SubprocessRunner:
         except Exception:
             logger.exception("Error stopping app %s (pid %s)", app_id, proc.pid)
 
-    def is_running(self, app_id: str) -> bool:
+    async def is_running(self, app_id: str) -> bool:
         proc = self._procs.get(app_id)
         return proc is not None and proc.poll() is None
 
-    def pid(self, app_id: str) -> Optional[int]:
+    async def pid(self, app_id: str) -> Optional[int]:
         proc = self._procs.get(app_id)
         return proc.pid if proc is not None and proc.poll() is None else None
 
@@ -89,6 +90,8 @@ _LIVE_STATES = frozenset({"active", "activating", "reloading"})
 
 
 class SystemdRunner:
+    isolated = True  # own DynamicUser + sandbox: production
+
     def __init__(self, env_dir: Path, run: Callable[..., subprocess.CompletedProcess] = subprocess.run) -> None:
         self.env_dir = Path(env_dir)
         self._run = run
@@ -161,22 +164,24 @@ class SystemdRunner:
         if r.returncode not in (0, _UNIT_NOT_LOADED):
             raise RuntimeError(f"systemctl stop {unit} failed: {(r.stderr or '').strip()}")
 
-    def is_running(self, app_id: str) -> bool:
+    async def is_running(self, app_id: str) -> bool:
         unit = self.unit(app_id)
         try:
-            r = self._run(_SYSTEMCTL + ["is-active", unit],
-                          capture_output=True, text=True, timeout=SYSTEMCTL_TIMEOUT_S)
+            r = await asyncio.to_thread(
+                self._run, _SYSTEMCTL + ["is-active", unit],
+                capture_output=True, text=True, timeout=SYSTEMCTL_TIMEOUT_S)
         except subprocess.TimeoutExpired:
             logger.error("systemctl is-active %s timed out", unit)
             return False
         # 'activating' covers systemd's own Restart=on-failure backoff; restarting then would double up.
         return (r.stdout or "").strip() in _LIVE_STATES
 
-    def pid(self, app_id: str) -> Optional[int]:
+    async def pid(self, app_id: str) -> Optional[int]:
         unit = self.unit(app_id)
         try:
-            r = self._run(_SYSTEMCTL + ["show", "-p", "MainPID", "--value", unit],
-                          capture_output=True, text=True, timeout=SYSTEMCTL_TIMEOUT_S)
+            r = await asyncio.to_thread(
+                self._run, _SYSTEMCTL + ["show", "-p", "MainPID", "--value", unit],
+                capture_output=True, text=True, timeout=SYSTEMCTL_TIMEOUT_S)
         except subprocess.TimeoutExpired:
             logger.error("systemctl show %s timed out", unit)
             return None
