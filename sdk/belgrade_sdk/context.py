@@ -220,43 +220,45 @@ class AppContext:
         if not self._db_engine:
             raise RuntimeError("Database not configured for this app.")
         if not self._db_session:
-            schema_name = None
-            if self.tenant_id:
-                if not _TENANT_RE.match(self.tenant_id):
-                    raise ValueError(f"tenant_id not usable in a DB schema name: {self.tenant_id!r}")
-                if not _APP_ID_RE.match(self.app_id):
-                    raise ValueError(f"app_id not usable in a DB schema name: {self.app_id!r}")
-                schema_name = f"app_{self.tenant_id}_{self.app_id}"
-                if len(schema_name) > _PG_IDENTIFIER_MAX:
-                    raise ValueError(
-                        f"DB schema name {schema_name!r} exceeds {_PG_IDENTIFIER_MAX} characters")
+            # Without a tenant there is no schema, so the app would run on the role's default
+            # search_path ("$user", public): not tenant-scoped, and "$user" can collide with a
+            # schema named like the role. Refuse before taking a connection.
+            if not self.tenant_id:
+                raise ValueError("ctx.db requires a tenant_id")
+            if not _TENANT_RE.match(self.tenant_id):
+                raise ValueError(f"tenant_id not usable in a DB schema name: {self.tenant_id!r}")
+            if not _APP_ID_RE.match(self.app_id):
+                raise ValueError(f"app_id not usable in a DB schema name: {self.app_id!r}")
+            schema_name = f"app_{self.tenant_id}_{self.app_id}"
+            if len(schema_name) > _PG_IDENTIFIER_MAX:
+                raise ValueError(
+                    f"DB schema name {schema_name!r} exceeds {_PG_IDENTIFIER_MAX} characters")
             # search_path is per-connection state. Pin the session to one connection for
             # this context's lifetime: an engine-bound session releases its connection on
             # every commit, and the next statement could run on a connection another
             # tenant pointed at its own schema. cleanup() resets it before pool return.
             self._db_conn = await self._db_engine.connect()
             try:
-                if schema_name:
-                    # Serialise first use: concurrent CREATE SCHEMA IF NOT EXISTS raises
-                    # UniqueViolation. Transaction-scoped, released by the commit/rollback below.
-                    await self._db_conn.execute(
-                        text("SELECT pg_advisory_xact_lock(hashtext(:s))"), {"s": schema_name})
-                    # Postgres accepts a search_path naming a missing schema and silently
-                    # falls through to public — create it so tables never leak across tenants.
-                    await self._db_conn.execute(text(f"CREATE SCHEMA IF NOT EXISTS {schema_name}"))
-                    # With per-app DB roles another app could have created (squatted) this
-                    # schema first; as its owner it could read everything we write there.
-                    owner, current = (await self._db_conn.execute(
-                        text("SELECT pg_get_userbyid(nspowner), current_user "
-                             "FROM pg_namespace WHERE nspname = :s"),
-                        {"s": schema_name},
-                    )).one()
-                    if owner != current:
-                        raise PermissionError(
-                            f"schema {schema_name} is owned by role {owner}, not {current}; "
-                            "drop or reassign it")
-                    await self._db_conn.execute(text(f"SET search_path TO {schema_name}, public"))
-                    await self._db_conn.commit()
+                # Serialise first use: concurrent CREATE SCHEMA IF NOT EXISTS raises
+                # UniqueViolation. Transaction-scoped, released by the commit/rollback below.
+                await self._db_conn.execute(
+                    text("SELECT pg_advisory_xact_lock(hashtext(:s))"), {"s": schema_name})
+                # Postgres accepts a search_path naming a missing schema and silently
+                # falls through to public — create it so tables never leak across tenants.
+                await self._db_conn.execute(text(f"CREATE SCHEMA IF NOT EXISTS {schema_name}"))
+                # With per-app DB roles another app could have created (squatted) this
+                # schema first; as its owner it could read everything we write there.
+                owner, current = (await self._db_conn.execute(
+                    text("SELECT pg_get_userbyid(nspowner), current_user "
+                         "FROM pg_namespace WHERE nspname = :s"),
+                    {"s": schema_name},
+                )).one()
+                if owner != current:
+                    raise PermissionError(
+                        f"schema {schema_name} is owned by role {owner}, not {current}; "
+                        "drop or reassign it")
+                await self._db_conn.execute(text(f"SET search_path TO {schema_name}, public"))
+                await self._db_conn.commit()
                 self._db_session = AsyncSession(bind=self._db_conn, expire_on_commit=False)
             except BaseException:
                 # Don't orphan the pinned connection: a retry would overwrite _db_conn.
@@ -266,7 +268,11 @@ class AppContext:
                 except Exception:
                     logger.exception("Rollback failed after DB setup error — discarding connection")
                     await conn.invalidate()
-                await conn.close()
+                try:
+                    await conn.close()
+                except Exception:
+                    # Never let a secondary failure mask the original setup error.
+                    logger.exception("Closing connection failed after DB setup error")
                 raise
         return self._db_session
 

@@ -127,7 +127,9 @@ async def test_schema_survives_commit_when_pool_hands_connection_to_another_tena
         await eng.dispose()
 
 
-async def test_tenantless_context_does_not_inherit_previous_tenant_schema():
+@pytest.mark.parametrize("tenant", [None, ""])
+async def test_tenantless_context_refuses_db_without_taking_a_connection(tenant):
+    """No tenant -> no schema -> the role's default search_path; refuse before connecting."""
     eng = create_async_engine(TEST_DB_URL, pool_size=1, max_overflow=0, pool_timeout=5)
     try:
         async with eng.connect() as conn:
@@ -136,21 +138,22 @@ async def test_tenantless_context_does_not_inherit_previous_tenant_schema():
         await eng.dispose()
         pytest.skip(f"Postgres unreachable at {TEST_DB_URL}: {exc}")
 
-    a = f"t{uuid.uuid4().hex[:8]}"
+    good = f"t{uuid.uuid4().hex[:8]}"
     try:
-        ctx_a = _ctx(eng, a)
-        db_a = await ctx_a.db
-        await db_a.execute(text("SELECT 1"))
-        await db_a.commit()  # a committed SET outlives the transaction on the pooled connection
-        await ctx_a.cleanup()
-
-        ctx_none = _ctx(eng, None)
-        schema = (await (await ctx_none.db).execute(text("SELECT current_schema()"))).scalar_one()
+        ctx_none = _ctx(eng, tenant)
+        with pytest.raises(ValueError, match="ctx.db requires a tenant_id"):
+            await ctx_none.db
+        assert eng.pool.checkedout() == 0
         await ctx_none.cleanup()
-        assert schema == "public"
+
+        # The single pooled connection is still available (nothing was checked out).
+        ctx_good = _ctx(eng, good)
+        schema = (await (await ctx_good.db).execute(text("SELECT current_schema()"))).scalar_one()
+        await ctx_good.cleanup()
+        assert schema == f"app_{good}_isotest"
     finally:
         async with eng.begin() as conn:
-            await conn.execute(text(f"DROP SCHEMA IF EXISTS app_{a}_isotest CASCADE"))
+            await conn.execute(text(f"DROP SCHEMA IF EXISTS app_{good}_isotest CASCADE"))
         await eng.dispose()
 
 
@@ -309,7 +312,7 @@ async def test_refusal_message_names_the_owner(engine):
             await conn.execute(text(f"CREATE ROLE {squatter}"))
             await conn.execute(text(f"CREATE SCHEMA {schema} AUTHORIZATION {squatter}"))
         ctx = _ctx(engine, tenant)
-        with pytest.raises(PermissionError, match=f"owned by role {squatter}, not postgres"):
+        with pytest.raises(PermissionError, match=f"owned by role {squatter}, not {make_url(TEST_DB_URL).username}"):
             await ctx.db
         await ctx.cleanup()
     finally:
@@ -352,3 +355,70 @@ async def test_works_as_real_non_superuser_role(engine):
             if exists:
                 await conn.execute(text(f"DROP OWNED BY {role}"))
                 await conn.execute(text(f"DROP ROLE {role}"))
+
+
+async def _setup_failure_with_broken_connection(monkeypatch, *, close_raises: bool):
+    """Force ctx.db setup to fail (squatted schema) while rollback() -- and optionally
+    close() -- raise too. Returns (engine, raised_exception_info) after asserting the pool."""
+    from sqlalchemy.ext.asyncio import AsyncConnection
+
+    eng = create_async_engine(TEST_DB_URL, pool_size=1, max_overflow=0, pool_timeout=5)
+    try:
+        async with eng.connect() as conn:
+            await conn.execute(text("SELECT 1"))
+    except Exception as exc:
+        await eng.dispose()
+        pytest.skip(f"Postgres unreachable at {TEST_DB_URL}: {exc}")
+
+    tenant = f"t{uuid.uuid4().hex[:8]}"
+    good = f"t{uuid.uuid4().hex[:8]}"
+    squatter = f"squat{uuid.uuid4().hex[:8]}"
+    schema = f"app_{tenant}_isotest"
+    try:
+        async with eng.begin() as conn:
+            await conn.execute(text(f"CREATE ROLE {squatter}"))
+            await conn.execute(text(f"CREATE SCHEMA {schema} AUTHORIZATION {squatter}"))
+
+        real_rollback, real_close = AsyncConnection.rollback, AsyncConnection.close
+        broken = {"on": True}
+
+        async def bad_rollback(self):
+            if broken["on"]:
+                raise RuntimeError("rollback exploded")
+            return await real_rollback(self)
+
+        async def bad_close(self):
+            await real_close(self)  # really release the connection, then misbehave
+            if broken["on"] and close_raises:
+                raise RuntimeError("close exploded")
+
+        monkeypatch.setattr(AsyncConnection, "rollback", bad_rollback)
+        monkeypatch.setattr(AsyncConnection, "close", bad_close)
+
+        ctx = _ctx(eng, tenant)
+        with pytest.raises(PermissionError, match=schema):  # the ORIGINAL error, not the rollback/close one
+            await ctx.db
+        broken["on"] = False
+        assert ctx._db_conn is None
+        assert eng.pool.checkedout() == 0
+
+        # The single pooled slot is usable again.
+        ctx_good = _ctx(eng, good)
+        got = (await (await ctx_good.db).execute(text("SELECT current_schema()"))).scalar_one()
+        await ctx_good.cleanup()
+        assert got == f"app_{good}_isotest"
+    finally:
+        monkeypatch.undo()
+        async with eng.begin() as conn:
+            for t in (tenant, good):
+                await conn.execute(text(f"DROP SCHEMA IF EXISTS app_{t}_isotest CASCADE"))
+            await conn.execute(text(f"DROP ROLE IF EXISTS {squatter}"))
+        await eng.dispose()
+
+
+async def test_rollback_failure_during_setup_error_keeps_original_error_and_frees_pool(monkeypatch):
+    await _setup_failure_with_broken_connection(monkeypatch, close_raises=False)
+
+
+async def test_close_failure_during_setup_error_does_not_mask_original_error(monkeypatch):
+    await _setup_failure_with_broken_connection(monkeypatch, close_raises=True)

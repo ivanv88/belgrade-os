@@ -17,10 +17,11 @@ from . import defaults
 # The platform gives each app role CONNECTION LIMIT 10 (platform_controller/app_db.py);
 # 9 leaves one spare for psql/debugging. Each ctx.db pins one connection for the request,
 # so callers beyond 9 wait in the pool instead of failing with "too many connections".
-# pool_timeout is the SQLAlchemy default (30s): request #10 waits that long, then errors.
+# pool_timeout is set explicitly (30s, the SQLAlchemy default): request #10 waits that long, then errors.
 # Sizing assumes one uvicorn worker per app (each worker would have its own pool).
 DB_POOL_SIZE = 5
 DB_MAX_OVERFLOW = 4
+DB_POOL_TIMEOUT = 30
 
 logger = logging.getLogger(__name__)
 
@@ -161,7 +162,8 @@ class BelgradeApp:
 
     def _create_db_engine(self) -> AsyncEngine:
         return create_async_engine(
-            self.db_url, pool_size=DB_POOL_SIZE, max_overflow=DB_MAX_OVERFLOW
+            self.db_url, pool_size=DB_POOL_SIZE, max_overflow=DB_MAX_OVERFLOW,
+            pool_timeout=DB_POOL_TIMEOUT,
         )
 
     def run(self, host: str = "127.0.0.1", port: int = 9000):

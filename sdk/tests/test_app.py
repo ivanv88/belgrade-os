@@ -139,3 +139,4 @@ def test_db_engine_pool_fits_within_app_role_connection_limit():
         bapp._create_db_engine()
     kwargs = create.call_args.kwargs
     assert kwargs["pool_size"] + kwargs["max_overflow"] <= 10
+    assert kwargs["pool_timeout"] == 30
