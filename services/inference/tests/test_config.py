@@ -66,3 +66,15 @@ def test_ignores_other_services_keys_in_shared_env_file(tmp_path):
     env = tmp_path / ".env"
     env.write_text("CF_TUNNEL_TOKEN=x\nAPP_REDIS_URL=redis://app@localhost:6379\nMCP_JWT_SECRET=s\n")
     Config(provider="ollama", model="m", _env_file=env)
+
+
+def test_default_tenant_id_defaults_to_family(monkeypatch):
+    monkeypatch.delenv("DEFAULT_TENANT_ID", raising=False)
+    c = Config(provider="gemini", model="m", google_api_key="k", _env_file=None)
+    assert c.default_tenant_id == "family"
+
+
+def test_default_tenant_id_from_env(monkeypatch):
+    monkeypatch.setenv("DEFAULT_TENANT_ID", "acme")
+    c = Config(provider="gemini", model="m", google_api_key="k", _env_file=None)
+    assert c.default_tenant_id == "acme"

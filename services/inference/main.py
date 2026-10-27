@@ -41,6 +41,7 @@ async def _consumer_loop(
     redis: RedisClient,
     provider: InferenceProvider,
     consumer_id: str,
+    default_tenant_id: str = "family",
 ) -> None:
     while True:
         result: Optional[tuple] = await redis.read_task(CONSUMER_GROUP, consumer_id)
@@ -50,7 +51,9 @@ async def _consumer_loop(
         task = belgrade_os_pb2.Task()
         task.ParseFromString(task_bytes)
         try:
-            await process_task(task, redis, provider, consumer_id)
+            await process_task(
+                task, redis, provider, consumer_id, default_tenant_id
+            )
         except Exception:
             log.exception(
                 "Unhandled error processing task task_id=%s", task.task_id
@@ -71,7 +74,7 @@ async def main() -> None:
         cfg.model,
         consumer_id,
     )
-    await _consumer_loop(redis, provider, consumer_id)
+    await _consumer_loop(redis, provider, consumer_id, cfg.default_tenant_id)
 
 
 if __name__ == "__main__":

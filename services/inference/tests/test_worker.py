@@ -346,3 +346,40 @@ async def test_no_cancel_key_proceeds_normally():
     events = _parse_published_events(mock_redis)
     done_events = [e for e in events if e.type == belgrade_os_pb2.DONE]
     assert len(done_events) == 1
+
+
+async def _dispatched_tenant(task, **kwargs) -> str:
+    from providers.base import StreamDone, ToolUse
+
+    mock_redis = _make_redis()
+    tool_result = belgrade_os_pb2.ToolResult(
+        call_id="c1", task_id=task.task_id, success=True, output_json="{}"
+    )
+    mock_redis.read_tool_result = AsyncMock(
+        return_value=("msg-1", tool_result.SerializeToString())
+    )
+    provider = await _provider_from_events([
+        [StreamDone("tool_use", [ToolUse("c1", "shopping:add", {})])],
+        [StreamDone("end_turn")],
+    ])
+    await process_task(task, mock_redis, provider, "worker-1", **kwargs)
+    tc = belgrade_os_pb2.ToolCall()
+    tc.ParseFromString(mock_redis.push_untrusted_tool_call.await_args.args[0])
+    return tc.tenant_id
+
+
+async def test_empty_tenant_falls_back_to_family():
+    task = belgrade_os_pb2.Task(task_id="t-d", user_id="u1", prompt="x", app_id="shopping")
+    assert await _dispatched_tenant(task) == "family"
+
+
+async def test_empty_tenant_uses_configured_default():
+    task = belgrade_os_pb2.Task(task_id="t-d", user_id="u1", prompt="x", app_id="shopping")
+    assert await _dispatched_tenant(task, default_tenant_id="acme") == "acme"
+
+
+async def test_explicit_tenant_is_not_overridden_by_default():
+    task = belgrade_os_pb2.Task(
+        task_id="t-d", user_id="u1", prompt="x", app_id="shopping", tenant_id="other"
+    )
+    assert await _dispatched_tenant(task, default_tenant_id="acme") == "other"

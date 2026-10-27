@@ -13,6 +13,11 @@ class Config(BaseSettings):
     model: str
     max_tokens: int = 8192
     consumer_id: str = ""
+    # Tenant for tasks that arrive without one (the gateway never sets tenant_id).
+    # Must satisfy the SDK's tenant rule ^[a-z0-9]{1,32}$.
+    default_tenant_id: str = Field(
+        default="family", validation_alias=AliasChoices("DEFAULT_TENANT_ID")
+    )
 
     anthropic_api_key: Optional[str] = None
     google_api_key: Optional[str] = None

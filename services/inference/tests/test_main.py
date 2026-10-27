@@ -176,3 +176,27 @@ def test_build_provider_ollama():
 
     cfg = Config(provider="ollama", model="qwen2.5-coder", _env_file=None)
     assert isinstance(_build_provider(cfg), OllamaProvider)
+
+
+async def test_consumer_loop_passes_default_tenant_to_process_task():
+    task = belgrade_os_pb2.Task(task_id="t1", user_id="u1", prompt="x", trace_id="tr1")
+    calls = []
+
+    async def fake_read(consumer_group, consumer_id):
+        calls.append(1)
+        if len(calls) == 1:
+            return ("msg-001", task.SerializeToString())
+        await asyncio.sleep(9999)
+
+    mock_redis = AsyncMock()
+    mock_redis.read_task = fake_read
+
+    with patch("main.process_task", new_callable=AsyncMock) as mock_process_task:
+        try:
+            await asyncio.wait_for(
+                _consumer_loop(mock_redis, AsyncMock(), "w1", "acme"), timeout=1.0
+            )
+        except asyncio.TimeoutError:
+            pass
+
+    assert mock_process_task.await_args.args[-1] == "acme"

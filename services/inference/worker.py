@@ -41,13 +41,14 @@ async def process_task(
     redis: RedisClient,
     provider: InferenceProvider,
     consumer_id: str,
+    default_tenant_id: str = "family",
 ) -> None:
     """Drive the full inference + tool loop for a single task."""
     messages: list = [{"role": "user", "content": task.prompt}]
     
-    # Use tenant_id from task if present; fall back to platform default for legacy tasks
-    # (legacy /v1/tasks calls leave tenant_id empty).
-    tenant_id = task.tenant_id or "household-vladisavljevic"
+    # Use tenant_id from task if present; fall back to the configured default
+    # (the gateway leaves tenant_id empty).
+    tenant_id = task.tenant_id or default_tenant_id
 
     # Defense-in-depth: if task.app_id is set, the task came from an app via the SDK.
     # Force UNTRUSTED regardless of what the proto field says — Redis ACLs cannot
