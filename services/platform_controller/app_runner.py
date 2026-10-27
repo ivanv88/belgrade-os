@@ -61,7 +61,9 @@ class SubprocessRunner:
         if proc is None:
             return
         try:
-            pgid = os.getpgid(proc.pid)
+            # start() uses os.setsid, so the group id equals proc.pid; using it
+            # directly still reaches grandchildren if the leader was already reaped.
+            pgid = proc.pid
             os.killpg(pgid, signal.SIGTERM)
             try:
                 await asyncio.to_thread(proc.wait, self.stop_timeout_s)

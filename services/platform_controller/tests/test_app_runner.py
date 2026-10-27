@@ -200,7 +200,7 @@ def _write_app(app_dir, ignore_term: bool):
         "import signal, time, pathlib\n"
         + ("signal.signal(signal.SIGTERM, signal.SIG_IGN)\n" if ignore_term else "")
         + f"pathlib.Path({str(ready)!r}).write_text('1')\n"
-        "time.sleep(60)\n"
+        "time.sleep(15)\n"
     )
     return ready
 
@@ -213,20 +213,32 @@ def _wait_for(path):
 
 
 @pytest.mark.parametrize("ignore_term", [False, True])
-def test_subprocess_runner_really_stops_real_process(tmp_path, ignore_term):
+def test_subprocess_runner_really_stops_real_process(tmp_path, ignore_term, caplog):
     ready = _write_app(tmp_path, ignore_term)
     runner = SubprocessRunner()
     runner.stop_timeout_s = 0.5
 
+    started = []
+
     async def scenario():
         await runner.start("shopping", tmp_path, {"PATH": os.environ["PATH"]})
         proc = runner._procs["shopping"]
+        started.append(proc)
         await asyncio.to_thread(_wait_for, ready)
         assert runner.is_running("shopping")
         await runner.stop("shopping")
         return proc
 
-    proc = asyncio.run(scenario())
+    try:
+        with caplog.at_level("WARNING", logger="app_runner"):
+            proc = asyncio.run(scenario())
+    finally:
+        for p in started:  # never orphan the child if an assertion above failed
+            try:
+                os.killpg(p.pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+    assert ("SIGKILL" in caplog.text) is ignore_term
     assert proc.poll() is not None
     with pytest.raises(ProcessLookupError):
         os.kill(proc.pid, 0)
@@ -241,11 +253,14 @@ def test_subprocess_runner_pid_none_after_exit(tmp_path):
     assert runner.pid("shopping") is None
 
 
-def test_subprocess_runner_closes_log_handle_and_does_not_leak_on_popen_failure(tmp_path):
+def test_subprocess_runner_closes_log_handle_when_popen_fails(tmp_path):
     runner = SubprocessRunner()
-    with patch("app_runner.subprocess.Popen", side_effect=OSError("boom")):
+    log = MagicMock()
+    with patch("app_runner.open", MagicMock(return_value=log), create=True), \
+         patch("app_runner.subprocess.Popen", side_effect=OSError("boom")):
         with pytest.raises(OSError):
             asyncio.run(runner.start("shopping", tmp_path, {}))
+    log.__exit__.assert_called_once()
     assert "shopping" not in runner._procs
 
 
@@ -253,7 +268,7 @@ def test_subprocess_runner_stop_logs_unexpected_errors(tmp_path, caplog):
     proc = MagicMock(pid=42)
     runner = SubprocessRunner()
     runner._procs["shopping"] = proc
-    with patch("app_runner.os.getpgid", side_effect=PermissionError("nope")), \
+    with patch("app_runner.os.killpg", side_effect=PermissionError("nope")), \
          caplog.at_level("ERROR", logger="app_runner"):
         asyncio.run(runner.stop("shopping"))
     assert "nope" in caplog.text
