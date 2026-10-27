@@ -107,21 +107,37 @@ def test_systemd_rejects_unsafe_app_id(tmp_path):
 
 
 def test_systemd_stop_and_status(tmp_path):
-    run = FakeRun(returncode=0, stdout="1234\n")
+    class Run(FakeRun):
+        def __call__(self, argv, **kwargs):
+            r = super().__call__(argv, **kwargs)
+            r.stdout = "active\n" if "is-active" in argv else "1234\n"
+            return r
+
+    run = Run(returncode=0)
     runner = SystemdRunner(env_dir=tmp_path, run=run)
 
     assert runner.is_running("shopping") is True
     assert runner.pid("shopping") == 1234
     asyncio.run(runner.stop("shopping"))
 
-    assert SC + ["is-active", "--quiet", UNIT] in run.calls
+    assert SC + ["is-active", UNIT] in run.calls
     assert SC + ["stop", UNIT] in run.calls
 
 
 def test_systemd_reports_stopped_unit(tmp_path):
-    runner = SystemdRunner(env_dir=tmp_path, run=FakeRun(returncode=3, stdout="0\n"))
+    runner = SystemdRunner(env_dir=tmp_path, run=FakeRun(returncode=3, stdout="inactive\n"))
     assert runner.is_running("shopping") is False
     assert runner.pid("shopping") is None
+
+
+@pytest.mark.parametrize("state,expected", [
+    ("active", True), ("activating", True), ("reloading", True),
+    ("deactivating", False), ("failed", False), ("inactive", False), ("", False),
+])
+def test_systemd_is_running_by_unit_state(tmp_path, state, expected):
+    """A unit in systemd's own Restart= backoff reports 'activating'; the watchdog must not pile a restart on top."""
+    runner = SystemdRunner(env_dir=tmp_path, run=FakeRun(returncode=0 if state == "active" else 3, stdout=state + "\n"))
+    assert runner.is_running("shopping") is expected
 
 
 def test_subprocess_runner_spawns_and_tracks(tmp_path):

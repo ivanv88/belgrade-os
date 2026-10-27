@@ -1,23 +1,23 @@
 import asyncio
 import json
 import os
-import signal
-import sys
-import subprocess
 import logging
 import time
-from datetime import datetime
 from pathlib import Path
-from typing import Dict, List, Literal, Mapping, Optional
+from typing import Awaitable, Callable, Dict, List, Literal, Mapping, Optional
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel, ValidationError
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
 from sqlalchemy import text, Column, String, JSON, DateTime
 from sqlalchemy.orm import declarative_base
+from sqlalchemy.engine import make_url
+from sqlalchemy.exc import DBAPIError
 
 from scheduler import SchedulerManager, ScheduleEntry, PermissionSyncManager
 from ephemeral_runner import EphemeralRunner, OutputValidationError
 from config import load_config as _load_config
+from app_runner import SubprocessRunner, SystemdRunner
+from app_db import app_db_url, app_role_name, app_role_password, ensure_app_role
 
 import re
 import secrets
@@ -92,6 +92,9 @@ _APP_ENV_PASSTHROUGH = frozenset({
 })
 
 
+_APP_IDENTITY_VARS = ("HOME", "USER", "LOGNAME", "TMPDIR")
+
+
 def _app_base_env(parent: Mapping[str, str]) -> Dict[str, str]:
     return {
         k: v for k, v in parent.items()
@@ -104,7 +107,6 @@ class AppProcess:
         self.app_id = app_id
         self.path = path
         self.port = port
-        self.process: Optional[subprocess.Popen] = None
 
     def _load_manifest(self) -> Optional["_AppManifest"]:
         """Load and validate manifest.json from the app directory.
@@ -133,7 +135,10 @@ class AppProcess:
             )
         return manifest
 
-    async def start(self):
+    def build_env(self, db_url: str, inherit_identity: bool = True) -> Dict[str, str]:
+        """The environment the app runs with. `inherit_identity=False` drops the
+        controller's HOME/USER/LOGNAME/TMPDIR: under systemd the unit's DynamicUser
+        sets its own, and EnvironmentFile assignments would override them."""
         manifest = self._load_manifest()
         # Per-app driver from manifest overrides the global env var.
         notification_driver = (
@@ -142,6 +147,9 @@ class AppProcess:
         )
 
         env = _app_base_env(os.environ)
+        if not inherit_identity:
+            for key in _APP_IDENTITY_VARS:
+                env.pop(key, None)
         env["PYTHONPATH"] = os.pathsep.join(
             [str(SDK_ROOT)] + [p for p in env.get("PYTHONPATH", "").split(os.pathsep) if p]
         )
@@ -149,47 +157,31 @@ class AppProcess:
         env["BEG_OS_PORT"] = str(self.port)
         env["BEG_OS_CALLBACK_URL"] = f"http://localhost:{self.port}"
         env["BEG_OS_BRIDGE_URL"] = _cfg.bridge_url
-        env["BEG_OS_DB_URL"] = DB_URL
+        env["BEG_OS_DB_URL"] = db_url
         env["BEG_OS_REDIS_URL"] = os.getenv("APP_REDIS_URL") or os.getenv("BEG_OS_REDIS_URL", "redis://localhost:6379")
         env["BEG_OS_NOTIFICATION_DRIVER"] = notification_driver
         if manifest and manifest.mcp:
             env["BEG_OS_MCP_ENABLED"] = "true"
         else:
             env.pop("BEG_OS_MCP_ENABLED", None)
+        return env
 
-        cmd = [sys.executable, str(self.path / "main.py")]
-
-        log_file_path = self.path / "app.log"
-        logger.info(
-            "Starting app %s on port %s (driver=%s, logs=%s)",
-            self.app_id, self.port, notification_driver, log_file_path,
+    async def start(self, runner=None, db_url: Optional[str] = None) -> None:
+        await (runner or SubprocessRunner()).start(
+            self.app_id, self.path, self.build_env(db_url or DB_URL)
         )
 
-        log_file = open(log_file_path, "a")
-        log_file.write(f"\n--- App started at {datetime.now()} ---\n")
-        log_file.flush()
-
-        self.process = subprocess.Popen(
-            cmd,
-            env=env,
-            stdout=log_file,
-            stderr=log_file,
-            preexec_fn=os.setsid,
-        )
-
-    async def stop(self):
-        if self.process:
-            logger.info(f"Stopping app {self.app_id} (PID: {self.process.pid})...")
-            try:
-                os.killpg(os.getpgid(self.process.pid), signal.SIGTERM)
-                self.process.wait(timeout=5)
-            except Exception as e:
-                logger.error(f"Error stopping app {self.app_id}: {e}")
-            self.process = None
 
 class AppSupervisor:
-    def __init__(self, apps_root: Path):
+    def __init__(
+        self,
+        apps_root: Path,
+        runner=None,
+        db_url_for_app: Optional[Callable[[str], Awaitable[str]]] = None,
+    ):
         self.apps_root = apps_root
+        self.runner = runner or SubprocessRunner()
+        self.db_url_for_app = db_url_for_app
         self.running_apps: Dict[str, AppProcess] = {}
         # Ports are sticky per app_id so restarts keep the bridge callback URL valid.
         self.app_ports: Dict[str, int] = {}
@@ -208,9 +200,6 @@ class AppSupervisor:
                 await self.start_app(app_dir.name)
 
     async def start_app(self, app_id: str):
-        if app_id in self.running_apps:
-            await self.stop_app(app_id)
-
         app_path = self.apps_root / app_id
 
         # Container apps self-manage their lifecycle — skip process spawning.
@@ -236,29 +225,35 @@ class AppSupervisor:
 
         app_process = AppProcess(app_id, app_path, self.app_ports[app_id])
         try:
-            await app_process.start()
-        except ValueError as exc:
-            logger.error("Skipping app %s — invalid manifest: %s", app_id, exc)
+            db_url = await self.db_url_for_app(app_id) if self.db_url_for_app else DB_URL
+            env = app_process.build_env(
+                db_url, inherit_identity=not isinstance(self.runner, SystemdRunner)
+            )
+            await self.runner.start(app_id, app_path, env)
+        except (ValueError, RuntimeError) as exc:
+            logger.error("Skipping app %s — %s", app_id, exc)
             return
 
         self.running_apps[app_id] = app_process
 
     async def stop_app(self, app_id: str):
         if app_id in self.running_apps:
-            await self.running_apps[app_id].stop()
+            try:
+                await self.runner.stop(app_id)
+            except RuntimeError as exc:
+                logger.error("Failed to stop app %s — %s", app_id, exc)
+                return  # still running as far as we know; keep it visible
             del self.running_apps[app_id]
 
     async def _watch_tick(self) -> None:
         """Check all running apps; restart any that have exited."""
-        dead = [
-            app_id
-            for app_id, proc in self.running_apps.items()
-            if proc.process is not None and proc.process.poll() is not None
-        ]
+        dead = [a for a in self.running_apps if not self.runner.is_running(a)]
         for app_id in dead:
-            logger.warning("app %s exited (rc=%s) — restarting", app_id,
-                           self.running_apps[app_id].process.returncode)
-            await self.start_app(app_id)
+            logger.warning("app %s is not running — restarting", app_id)
+            try:
+                await self.start_app(app_id)
+            except Exception:
+                logger.exception("restart of app %s failed", app_id)
 
     async def watch(self, interval: int = 10) -> None:
         """Background loop: call _watch_tick every `interval` seconds."""
@@ -482,7 +477,36 @@ async def _untrusted_consumer_loop(redis_url: str) -> None:
 
 # --- FastAPI App ---
 app = FastAPI(title="Belgrade Platform Controller")
-app_supervisor = AppSupervisor(apps_root=APPS_ROOT)
+
+
+async def _provision_app_db(app_id: str) -> str:
+    role = app_role_name(app_id)
+    password = app_role_password(_cfg.app_db_secret, app_id)
+    try:
+        async with engine.begin() as conn:
+            await ensure_app_role(conn, role, password, make_url(DB_URL).database)
+    except DBAPIError as e:
+        # The statement text can carry the role password; never let it reach the logs.
+        raise RuntimeError(
+            f"provisioning DB role for {app_id} failed: {type(e.orig).__name__}"
+        ) from None
+    return app_db_url(DB_URL, role, password)
+
+
+_runner = (SystemdRunner(env_dir=Path(_cfg.app_env_dir)) if _cfg.app_runner == "systemd"
+           else SubprocessRunner())
+if not _cfg.app_db_secret:
+    logger.warning("APP_DB_SECRET not set — apps share the platform DB user (dev only)")
+if _cfg.app_runner == "systemd" and APPS_ROOT.resolve() != (SDK_ROOT.parent / "apps").resolve():
+    logger.error(
+        "APPS_ROOT %s is not <repo root>/apps — the systemd unit template hard-codes that path",
+        APPS_ROOT,
+    )
+app_supervisor = AppSupervisor(
+    apps_root=APPS_ROOT,
+    runner=_runner,
+    db_url_for_app=_provision_app_db if _cfg.app_db_secret else None,
+)
 scheduler_manager = SchedulerManager(bridge_url=_cfg.bridge_url)
 permission_sync = PermissionSyncManager(db_engine=engine, redis_url=REDIS_URL)
 
@@ -555,7 +579,7 @@ async def reload_app(action: AppAction, _: None = Depends(_require_token)):
 @app.get("/apps")
 async def list_apps():
     return {
-        app_id: {"port": proc.port, "pid": proc.process.pid if proc.process else None}
+        app_id: {"port": proc.port, "pid": app_supervisor.runner.pid(app_id)}
         for app_id, proc in app_supervisor.running_apps.items()
     }
 

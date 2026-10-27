@@ -85,6 +85,9 @@ class SubprocessRunner:
         return proc.pid if proc is not None and proc.poll() is None else None
 
 
+_LIVE_STATES = frozenset({"active", "activating", "reloading"})
+
+
 class SystemdRunner:
     def __init__(self, env_dir: Path, run: Callable[..., subprocess.CompletedProcess] = subprocess.run) -> None:
         self.env_dir = Path(env_dir)
@@ -161,12 +164,13 @@ class SystemdRunner:
     def is_running(self, app_id: str) -> bool:
         unit = self.unit(app_id)
         try:
-            r = self._run(_SYSTEMCTL + ["is-active", "--quiet", unit],
+            r = self._run(_SYSTEMCTL + ["is-active", unit],
                           capture_output=True, text=True, timeout=SYSTEMCTL_TIMEOUT_S)
         except subprocess.TimeoutExpired:
             logger.error("systemctl is-active %s timed out", unit)
             return False
-        return r.returncode == 0
+        # 'activating' covers systemd's own Restart=on-failure backoff; restarting then would double up.
+        return (r.stdout or "").strip() in _LIVE_STATES
 
     def pid(self, app_id: str) -> Optional[int]:
         unit = self.unit(app_id)

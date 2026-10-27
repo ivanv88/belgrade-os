@@ -19,8 +19,8 @@ def test_start_injects_redis_url(tmp_path):
         mock.pid = 1234
         return mock
 
-    with patch("main.subprocess.Popen", side_effect=fake_popen), \
-         patch("main.open", MagicMock()), \
+    with patch("app_runner.subprocess.Popen", side_effect=fake_popen), \
+         patch("app_runner.open", MagicMock(), create=True), \
          patch.dict(os.environ, {"BEG_OS_REDIS_URL": "redis://redis:6379"}, clear=False):
         import asyncio
         asyncio.run(app.start())
@@ -39,8 +39,8 @@ def test_start_uses_global_driver_when_no_manifest(tmp_path):
         mock.pid = 1234
         return mock
 
-    with patch("main.subprocess.Popen", side_effect=fake_popen), \
-         patch("main.open", MagicMock()), \
+    with patch("app_runner.subprocess.Popen", side_effect=fake_popen), \
+         patch("app_runner.open", MagicMock(), create=True), \
          patch.dict(os.environ, {"BEG_OS_NOTIFICATION_DRIVER": "firebase"}, clear=False):
         import asyncio
         asyncio.run(app.start())
@@ -62,8 +62,8 @@ def test_start_uses_manifest_driver_over_global(tmp_path):
 
     fake_manifest = _AppManifest(app_id="shopping", notifications=_NotificationsManifest(driver="firebase"))
 
-    with patch("main.subprocess.Popen", side_effect=fake_popen), \
-         patch("main.open", MagicMock()), \
+    with patch("app_runner.subprocess.Popen", side_effect=fake_popen), \
+         patch("app_runner.open", MagicMock(), create=True), \
          patch("main.AppProcess._load_manifest", return_value=fake_manifest), \
          patch.dict(os.environ, {"BEG_OS_NOTIFICATION_DRIVER": "ntfy"}, clear=False):
         import asyncio
@@ -140,94 +140,6 @@ def test_start_app_skips_app_on_invalid_manifest(tmp_path):
     assert "badapp" not in sup.running_apps
 
 
-def test_watchdog_restarts_dead_app(tmp_path):
-    """If an app process exits, the watchdog must restart it within one tick."""
-    from main import AppSupervisor
-    sup = AppSupervisor(apps_root=tmp_path)
-
-    app_dir = tmp_path / "myapp"
-    app_dir.mkdir()
-    (app_dir / "main.py").write_text("# stub")
-
-    live_proc = MagicMock()
-    live_proc.pid = 9999
-    live_proc.poll.return_value = None
-
-    dead_proc = MagicMock()
-    dead_proc.pid = 9998
-    dead_proc.poll.return_value = 1
-    dead_proc.returncode = 1
-
-    start_call_count = 0
-
-    async def run():
-        nonlocal start_call_count
-        original_start = sup.start_app
-
-        async def mock_start(app_id):
-            nonlocal start_call_count
-            start_call_count += 1
-            proc = live_proc if start_call_count == 1 else MagicMock(pid=9997, poll=MagicMock(return_value=None))
-            with patch("main.subprocess.Popen", return_value=proc), \
-                 patch("main.open", MagicMock()):
-                await original_start(app_id)
-            if start_call_count == 1:
-                sup.running_apps["myapp"].process = dead_proc
-
-        sup.start_app = mock_start
-
-        with patch("main.subprocess.Popen", return_value=live_proc), \
-             patch("main.open", MagicMock()):
-            await sup.discover_and_start()
-
-        assert start_call_count == 1
-
-        await sup._watch_tick()
-
-        assert start_call_count == 2, "watchdog must restart dead app"
-
-    asyncio.run(run())
-
-
-def test_watchdog_does_not_restart_live_app(tmp_path):
-    """Running apps must not be restarted by the watchdog."""
-    from main import AppSupervisor
-    sup = AppSupervisor(apps_root=tmp_path)
-
-    app_dir = tmp_path / "myapp"
-    app_dir.mkdir()
-    (app_dir / "main.py").write_text("# stub")
-
-    live_proc = MagicMock()
-    live_proc.pid = 9999
-    live_proc.poll.return_value = None
-
-    start_call_count = 0
-
-    async def run():
-        nonlocal start_call_count
-        original_start = sup.start_app
-
-        async def mock_start(app_id):
-            nonlocal start_call_count
-            start_call_count += 1
-            with patch("main.subprocess.Popen", return_value=live_proc), \
-                 patch("main.open", MagicMock()):
-                await original_start(app_id)
-
-        sup.start_app = mock_start
-
-        with patch("main.subprocess.Popen", return_value=live_proc), \
-             patch("main.open", MagicMock()):
-            await sup.discover_and_start()
-
-        await sup._watch_tick()
-
-        assert start_call_count == 1, "live app must not be restarted"
-
-    asyncio.run(run())
-
-
 def test_start_injects_mcp_enabled_when_manifest_has_mcp_true(tmp_path):
     """BEG_OS_MCP_ENABLED=true injected when manifest has mcp: true."""
     app = AppProcess(app_id="shopping", path=tmp_path, port=9001)
@@ -242,8 +154,8 @@ def test_start_injects_mcp_enabled_when_manifest_has_mcp_true(tmp_path):
         mock.pid = 1234
         return mock
 
-    with patch("main.subprocess.Popen", side_effect=fake_popen), \
-         patch("main.open", MagicMock()):
+    with patch("app_runner.subprocess.Popen", side_effect=fake_popen), \
+         patch("app_runner.open", MagicMock(), create=True):
         asyncio.run(app.start())
 
     assert captured_env.get("BEG_OS_MCP_ENABLED") == "true"
@@ -263,8 +175,8 @@ def test_start_does_not_inject_mcp_when_manifest_has_mcp_false(tmp_path):
         mock.pid = 1234
         return mock
 
-    with patch("main.subprocess.Popen", side_effect=fake_popen), \
-         patch("main.open", MagicMock()), \
+    with patch("app_runner.subprocess.Popen", side_effect=fake_popen), \
+         patch("app_runner.open", MagicMock(), create=True), \
          patch.dict(os.environ, {"BEG_OS_MCP_ENABLED": "true"}):
         asyncio.run(app.start())
 
@@ -282,8 +194,8 @@ def test_start_does_not_inject_mcp_when_no_manifest(tmp_path):
         mock.pid = 1234
         return mock
 
-    with patch("main.subprocess.Popen", side_effect=fake_popen), \
-         patch("main.open", MagicMock()), \
+    with patch("app_runner.subprocess.Popen", side_effect=fake_popen), \
+         patch("app_runner.open", MagicMock(), create=True), \
          patch.dict(os.environ, {"BEG_OS_MCP_ENABLED": "true"}):
         asyncio.run(app.start())
 
@@ -355,8 +267,8 @@ def test_start_injects_port(tmp_path):
         captured_env.update(env)
         return MagicMock(pid=1234)
 
-    with patch("main.subprocess.Popen", side_effect=fake_popen), \
-         patch("main.open", MagicMock()):
+    with patch("app_runner.subprocess.Popen", side_effect=fake_popen), \
+         patch("app_runner.open", MagicMock(), create=True):
         asyncio.run(app.start())
 
     assert captured_env["BEG_OS_PORT"] == "9007"
@@ -372,8 +284,8 @@ def test_restarted_app_keeps_its_port(tmp_path):
         (tmp_path / name / "main.py").write_text("# stub")
 
     async def run():
-        with patch("main.subprocess.Popen", return_value=MagicMock(pid=1)), \
-             patch("main.open", MagicMock()):
+        with patch("app_runner.subprocess.Popen", return_value=MagicMock(pid=1)), \
+             patch("app_runner.open", MagicMock(), create=True):
             await sup.start_app("alpha")
             await sup.start_app("beta")
             alpha_port = sup.running_apps["alpha"].port
@@ -392,8 +304,8 @@ def test_discover_skips_app_without_main_py(tmp_path):
     ui_only.mkdir()
     (ui_only / "manifest.json").write_text(json.dumps({"app_id": "dashboard"}))
 
-    with patch("main.subprocess.Popen") as mock_popen, \
-         patch("main.open", MagicMock()):
+    with patch("app_runner.subprocess.Popen") as mock_popen, \
+         patch("app_runner.open", MagicMock(), create=True):
         asyncio.run(sup.discover_and_start())
 
     mock_popen.assert_not_called()
@@ -405,8 +317,8 @@ def test_start_runs_app_with_controller_interpreter(tmp_path):
     import sys
     app = AppProcess(app_id="shopping", path=tmp_path, port=9001)
 
-    with patch("main.subprocess.Popen", return_value=MagicMock(pid=1)) as mock_popen, \
-         patch("main.open", MagicMock()):
+    with patch("app_runner.subprocess.Popen", return_value=MagicMock(pid=1)) as mock_popen, \
+         patch("app_runner.open", MagicMock(), create=True):
         asyncio.run(app.start())
 
     assert mock_popen.call_args.args[0][0] == sys.executable
@@ -431,8 +343,8 @@ def _start_and_capture_env(tmp_path, parent_env: dict) -> dict:
         captured_env.update(env)
         return MagicMock(pid=1)
 
-    with patch("main.subprocess.Popen", side_effect=fake_popen), \
-         patch("main.open", MagicMock()), \
+    with patch("app_runner.subprocess.Popen", side_effect=fake_popen), \
+         patch("app_runner.open", MagicMock(), create=True), \
          patch.dict(os.environ, parent_env, clear=False):
         asyncio.run(app.start())
     return captured_env
@@ -478,3 +390,218 @@ def test_apps_can_import_the_sdk(tmp_path):
     assert str(SDK_ROOT) in entries
     assert "/repo" in entries
     assert (SDK_ROOT / "belgrade_sdk" / "__init__.py").exists()
+
+
+# --- identity env (systemd mode) ---
+
+def test_build_env_drops_identity_vars_for_systemd(tmp_path):
+    """EnvironmentFile assignments override what systemd sets for the DynamicUser."""
+    app = AppProcess(app_id="shopping", path=tmp_path, port=9001)
+    parent = {"HOME": "/home/ivan", "USER": "ivan", "LOGNAME": "ivan", "TMPDIR": "/tmp/x", "PATH": "/usr/bin"}
+    with patch.dict(os.environ, parent, clear=False):
+        env = app.build_env("postgresql+asyncpg://u:p@h/d", inherit_identity=False)
+    for k in ("HOME", "USER", "LOGNAME", "TMPDIR"):
+        assert k not in env
+    assert env["PATH"] == "/usr/bin"
+    assert env["BEG_OS_DB_URL"] == "postgresql+asyncpg://u:p@h/d"
+
+
+def test_build_env_keeps_identity_vars_by_default(tmp_path):
+    app = AppProcess(app_id="shopping", path=tmp_path, port=9001)
+    with patch.dict(os.environ, {"HOME": "/home/ivan", "USER": "ivan"}, clear=False):
+        env = app.build_env("x")
+    assert env["HOME"] == "/home/ivan" and env["USER"] == "ivan"
+
+
+# --- supervisor + runner ---
+
+class FakeRunner:
+    def __init__(self):
+        self.started: dict[str, dict] = {}
+        self.alive: set[str] = set()
+
+    async def start(self, app_id, app_dir, env):
+        self.started[app_id] = env
+        self.alive.add(app_id)
+
+    async def stop(self, app_id):
+        self.alive.discard(app_id)
+
+    def is_running(self, app_id):
+        return app_id in self.alive
+
+    def pid(self, app_id):
+        return 4242 if app_id in self.alive else None
+
+
+def _mk_app(root, name):
+    (root / name).mkdir()
+    (root / name / "main.py").write_text("# stub")
+
+
+def test_supervisor_starts_apps_through_its_runner(tmp_path):
+    from main import AppSupervisor
+    _mk_app(tmp_path, "shop")
+    runner = FakeRunner()
+    sup = AppSupervisor(apps_root=tmp_path, runner=runner)
+    asyncio.run(sup.discover_and_start())
+    assert runner.started["shop"]["BEG_OS_APP_ID"] == "shop"
+    assert "shop" in sup.running_apps
+
+
+def test_app_gets_its_own_db_url_from_the_provisioner(tmp_path):
+    from main import AppSupervisor
+    _mk_app(tmp_path, "shop")
+    runner = FakeRunner()
+
+    async def provision(app_id):
+        return f"postgresql+asyncpg://app_{app_id}:pw@localhost:5434/belgrade_os"
+
+    sup = AppSupervisor(apps_root=tmp_path, runner=runner, db_url_for_app=provision)
+    asyncio.run(sup.start_app("shop"))
+    assert runner.started["shop"]["BEG_OS_DB_URL"].startswith("postgresql+asyncpg://app_shop:")
+
+
+def test_watchdog_restarts_app_its_runner_reports_dead(tmp_path):
+    from main import AppSupervisor
+    _mk_app(tmp_path, "shop")
+    runner = FakeRunner()
+    sup = AppSupervisor(apps_root=tmp_path, runner=runner)
+
+    async def run():
+        await sup.start_app("shop")
+        runner.alive.discard("shop")
+        runner.started.clear()
+        await sup._watch_tick()
+        assert "shop" in runner.started
+        runner.started.clear()
+        await sup._watch_tick()
+        assert runner.started == {}
+
+    asyncio.run(run())
+
+
+def test_runner_start_failure_skips_app_and_logs(tmp_path, caplog):
+    from main import AppSupervisor
+
+    class Flaky(FakeRunner):
+        async def start(self, app_id, app_dir, env):
+            if app_id == "bad":
+                raise RuntimeError("systemctl restart failed: boom")
+            await super().start(app_id, app_dir, env)
+
+    for n in ("bad", "good"):
+        _mk_app(tmp_path, n)
+    sup = AppSupervisor(apps_root=tmp_path, runner=Flaky())
+    with caplog.at_level("ERROR"):
+        asyncio.run(sup.discover_and_start())
+    assert "bad" not in sup.running_apps and "good" in sup.running_apps
+    assert "Skipping app bad" in caplog.text and "boom" in caplog.text
+
+
+def test_watchdog_continues_when_one_restart_raises(tmp_path, caplog):
+    from main import AppSupervisor
+    for n in ("a", "b"):
+        _mk_app(tmp_path, n)
+    runner = FakeRunner()
+    sup = AppSupervisor(apps_root=tmp_path, runner=runner)
+
+    async def run():
+        await sup.start_app("a")
+        await sup.start_app("b")
+        runner.alive.clear()
+        runner.started.clear()
+        original = sup.start_app
+
+        async def flaky(app_id):
+            if app_id == "a":
+                raise OSError("disk gone")
+            await original(app_id)
+
+        sup.start_app = flaky
+        await sup._watch_tick()
+
+    with caplog.at_level("ERROR"):
+        asyncio.run(run())
+    assert "b" in runner.started
+    assert "disk gone" in caplog.text
+
+
+def test_invalid_db_app_id_is_skipped_when_provisioner_set(tmp_path, caplog):
+    from main import AppSupervisor
+    from app_db import app_role_name
+    _mk_app(tmp_path, "my-app")
+    _mk_app(tmp_path, "shop")
+    runner = FakeRunner()
+
+    async def provision(app_id):
+        return f"postgresql+asyncpg://{app_role_name(app_id)}:pw@h/d"
+
+    sup = AppSupervisor(apps_root=tmp_path, runner=runner, db_url_for_app=provision)
+    with caplog.at_level("ERROR"):
+        asyncio.run(sup.discover_and_start())
+    assert "my-app" not in sup.running_apps and "shop" in sup.running_apps
+    assert "Skipping app my-app" in caplog.text
+
+
+def test_failed_stop_keeps_app_visible(tmp_path, caplog):
+    from main import AppSupervisor
+    _mk_app(tmp_path, "shop")
+
+    class BadStop(FakeRunner):
+        async def stop(self, app_id):
+            raise RuntimeError("stop failed")
+
+    sup = AppSupervisor(apps_root=tmp_path, runner=BadStop())
+
+    async def run():
+        await sup.start_app("shop")
+        await sup.stop_app("shop")
+
+    with caplog.at_level("ERROR"):
+        asyncio.run(run())
+    assert "shop" in sup.running_apps
+    assert "stop failed" in caplog.text
+
+
+def test_systemd_runner_gets_env_without_identity_vars(tmp_path):
+    from main import AppSupervisor
+    from app_runner import SystemdRunner
+    _mk_app(tmp_path, "shop")
+    captured = {}
+
+    class Spy(SystemdRunner):
+        async def start(self, app_id, app_dir, env):
+            captured.update(env)
+
+    sup = AppSupervisor(apps_root=tmp_path, runner=Spy(env_dir=tmp_path))
+    with patch.dict(os.environ, {"HOME": "/home/ivan", "USER": "ivan"}, clear=False):
+        asyncio.run(sup.start_app("shop"))
+    assert "HOME" not in captured and "USER" not in captured
+    assert captured["BEG_OS_APP_ID"] == "shop"
+
+
+def test_provision_app_db_error_never_leaks_the_password(monkeypatch):
+    import main
+    from sqlalchemy.exc import DBAPIError
+
+    class Boom(Exception):
+        pass
+
+    async def failing(conn, role, password, database):
+        raise DBAPIError("ALTER ROLE app_shop PASSWORD 'SECRET-PW'", {}, Boom("x"))
+
+    class Conn:
+        async def __aenter__(self): return self
+        async def __aexit__(self, *a): return False
+
+    class Eng:
+        def begin(self): return Conn()
+
+    monkeypatch.setattr(main, "ensure_app_role", failing)
+    monkeypatch.setattr(main, "engine", Eng())
+    monkeypatch.setattr(main._cfg, "app_db_secret", "s" * 40, raising=False)
+    with pytest.raises(RuntimeError) as ei:
+        asyncio.run(main._provision_app_db("shop"))
+    assert "SECRET-PW" not in str(ei.value) and "Boom" in str(ei.value)
+    assert ei.value.__cause__ is None and ei.value.__suppress_context__

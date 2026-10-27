@@ -34,3 +34,34 @@ def test_host_defaults_to_loopback(monkeypatch):
 def test_host_from_env(monkeypatch):
     monkeypatch.setenv("CONTROLLER_HOST", "172.30.0.1")
     assert Config(_env_file=None).host == "172.30.0.1"
+
+
+def test_app_runner_defaults_to_subprocess(monkeypatch):
+    monkeypatch.delenv("CONTROLLER_APP_RUNNER", raising=False)
+    monkeypatch.delenv("APP_DB_SECRET", raising=False)
+    c = Config(_env_file=None)
+    assert c.app_runner == "subprocess"
+    assert c.app_env_dir == "/run/belgrade-os/apps"
+    assert c.app_db_secret == ""
+
+
+def test_app_runner_systemd_from_env(monkeypatch):
+    monkeypatch.setenv("CONTROLLER_APP_RUNNER", "systemd")
+    monkeypatch.setenv("APP_DB_SECRET", "s" * 64)
+    c = Config(_env_file=None)
+    assert (c.app_runner, c.app_db_secret) == ("systemd", "s" * 64)
+
+
+def test_short_app_db_secret_is_rejected(monkeypatch):
+    monkeypatch.delenv("CONTROLLER_APP_RUNNER", raising=False)
+    monkeypatch.setenv("APP_DB_SECRET", "short")
+    with pytest.raises(ValueError, match="32"):
+        Config(_env_file=None)
+
+
+def test_systemd_runner_requires_app_db_secret(monkeypatch):
+    """Production must never fall back to handing apps the superuser DB URL."""
+    monkeypatch.setenv("CONTROLLER_APP_RUNNER", "systemd")
+    monkeypatch.delenv("APP_DB_SECRET", raising=False)
+    with pytest.raises(ValueError, match="APP_DB_SECRET"):
+        Config(_env_file=None)
