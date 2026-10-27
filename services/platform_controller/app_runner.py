@@ -8,6 +8,7 @@ SystemdRunner    — sandboxed unit belgrade-os-app@<id>.service with its own
 from __future__ import annotations
 
 import asyncio
+import logging
 import os
 import re
 import signal
@@ -18,6 +19,12 @@ from datetime import datetime
 from pathlib import Path
 from typing import Callable, Dict, Optional
 
+logger = logging.getLogger(__name__)
+
+SYSTEMCTL_TIMEOUT_S = 10
+_SYSTEMCTL = ["systemctl", "--no-ask-password"]  # polkit miss fails fast, never prompts
+_UNIT_NOT_LOADED = 5  # systemctl exit status for "unit not loaded"
+
 _APP_ID_RE = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
 _ENV_KEY_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 # Characters that would end/alter a double-quoted EnvironmentFile value:
@@ -26,32 +33,46 @@ _ENV_KEY_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 # expansion or command substitution on EnvironmentFile= contents (that applies
 # only to Exec* command lines), and '%' specifiers are not expanded there
 # either, so DB URLs containing '%', '@' or '$' pass through verbatim.
+# Backslash is special inside the quotes (before $ \ " and `), and a trailing
+# backslash continues the value onto the next line, swallowing the next
+# assignment (verified on systemd 255), so it is rejected outright.
 _ENV_VALUE_FORBIDDEN = "\n\r\"\\"
 
 
 class SubprocessRunner:
+    stop_timeout_s: float = 5
+
     def __init__(self) -> None:
         self._procs: Dict[str, subprocess.Popen] = {}
 
     async def start(self, app_id: str, app_dir: Path, env: Dict[str, str]) -> None:
         await self.stop(app_id)
-        log_file = open(app_dir / "app.log", "a")
-        log_file.write(f"\n--- App started at {datetime.now()} ---\n")
-        log_file.flush()
-        self._procs[app_id] = subprocess.Popen(
-            [sys.executable, str(app_dir / "main.py")],
-            env=env, stdout=log_file, stderr=log_file, preexec_fn=os.setsid,
-        )
+        # The child inherits its own fd; our handle is closed even if Popen raises.
+        with open(app_dir / "app.log", "a") as log_file:
+            log_file.write(f"\n--- App started at {datetime.now()} ---\n")
+            log_file.flush()
+            self._procs[app_id] = subprocess.Popen(
+                [sys.executable, str(app_dir / "main.py")],
+                env=env, stdout=log_file, stderr=log_file, preexec_fn=os.setsid,
+            )
 
     async def stop(self, app_id: str) -> None:
         proc = self._procs.pop(app_id, None)
         if proc is None:
             return
         try:
-            os.killpg(os.getpgid(proc.pid), signal.SIGTERM)
-            proc.wait(timeout=5)
+            pgid = os.getpgid(proc.pid)
+            os.killpg(pgid, signal.SIGTERM)
+            try:
+                await asyncio.to_thread(proc.wait, self.stop_timeout_s)
+            except subprocess.TimeoutExpired:
+                logger.warning("App %s ignored SIGTERM; sending SIGKILL", app_id)
+                os.killpg(pgid, signal.SIGKILL)
+                await asyncio.to_thread(proc.wait, self.stop_timeout_s)
+        except ProcessLookupError:
+            pass  # already gone
         except Exception:
-            pass
+            logger.exception("Error stopping app %s (pid %s)", app_id, proc.pid)
 
     def is_running(self, app_id: str) -> bool:
         proc = self._procs.get(app_id)
@@ -59,7 +80,7 @@ class SubprocessRunner:
 
     def pid(self, app_id: str) -> Optional[int]:
         proc = self._procs.get(app_id)
-        return proc.pid if proc is not None else None
+        return proc.pid if proc is not None and proc.poll() is None else None
 
 
 class SystemdRunner:
@@ -74,6 +95,12 @@ class SystemdRunner:
         return f"belgrade-os-app@{app_id}.service"
 
     def _write_env_file(self, app_id: str, env: Dict[str, str]) -> None:
+        if not self.env_dir.is_dir():
+            raise RuntimeError(
+                f"env dir {self.env_dir} does not exist; it is created by the platform_controller "
+                "systemd drop-in RuntimeDirectory=belgrade-os/apps "
+                "(deploy/platform_controller-runtime-dir.conf)"
+            )
         # Validate everything first so a rejected entry never touches disk.
         lines = []
         for key, value in sorted(env.items()):
@@ -98,21 +125,55 @@ class SystemdRunner:
             raise
 
     async def start(self, app_id: str, app_dir: Path, env: Dict[str, str]) -> None:
+        """Write the env file and restart the app's unit.
+
+        ``app_dir`` is ignored: the unit template hard-codes ``@ROOT@/apps/%i``,
+        so in systemd mode the supervisor's apps_root must be ``$ROOT/apps``.
+        """
         unit = self.unit(app_id)
         self._write_env_file(app_id, env)
         # restart, not start: a running unit must pick up the rewritten env file.
-        await asyncio.to_thread(self._run, ["systemctl", "restart", unit], check=True, capture_output=True, text=True)
+        try:
+            await asyncio.to_thread(
+                self._run, _SYSTEMCTL + ["restart", unit],
+                check=True, capture_output=True, text=True, timeout=SYSTEMCTL_TIMEOUT_S,
+            )
+        except subprocess.CalledProcessError as e:
+            stderr = (e.stderr or "").strip()
+            raise RuntimeError(f"systemctl restart {unit} failed: {stderr}") from e
+        except subprocess.TimeoutExpired as e:
+            raise RuntimeError(f"systemctl restart {unit} timed out after {SYSTEMCTL_TIMEOUT_S}s") from e
 
     async def stop(self, app_id: str) -> None:
-        await asyncio.to_thread(self._run, ["systemctl", "stop", self.unit(app_id)], capture_output=True, text=True)
+        unit = self.unit(app_id)
+        try:
+            r = await asyncio.to_thread(
+                self._run, _SYSTEMCTL + ["stop", unit],
+                capture_output=True, text=True, timeout=SYSTEMCTL_TIMEOUT_S,
+            )
+        except subprocess.TimeoutExpired as e:
+            raise RuntimeError(f"systemctl stop {unit} timed out after {SYSTEMCTL_TIMEOUT_S}s") from e
+        if r.returncode not in (0, _UNIT_NOT_LOADED):
+            raise RuntimeError(f"systemctl stop {unit} failed: {(r.stderr or '').strip()}")
 
     def is_running(self, app_id: str) -> bool:
-        r = self._run(["systemctl", "is-active", "--quiet", self.unit(app_id)], capture_output=True, text=True)
+        unit = self.unit(app_id)
+        try:
+            r = self._run(_SYSTEMCTL + ["is-active", "--quiet", unit],
+                          capture_output=True, text=True, timeout=SYSTEMCTL_TIMEOUT_S)
+        except subprocess.TimeoutExpired:
+            logger.error("systemctl is-active %s timed out", unit)
+            return False
         return r.returncode == 0
 
     def pid(self, app_id: str) -> Optional[int]:
-        r = self._run(["systemctl", "show", "-p", "MainPID", "--value", self.unit(app_id)],
-                      capture_output=True, text=True)
+        unit = self.unit(app_id)
+        try:
+            r = self._run(_SYSTEMCTL + ["show", "-p", "MainPID", "--value", unit],
+                          capture_output=True, text=True, timeout=SYSTEMCTL_TIMEOUT_S)
+        except subprocess.TimeoutExpired:
+            logger.error("systemctl show %s timed out", unit)
+            return None
         try:
             pid = int(r.stdout.strip())
         except ValueError:
