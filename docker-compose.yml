@@ -43,7 +43,8 @@ services:
   # ── Edge tier ─────────────────────────────────────────────────────────────
 
   tunnel:
-    image: cloudflare/cloudflared:latest
+    # Pinned: :latest silently stayed on a months-old cached image. Bump deliberately.
+    image: cloudflare/cloudflared:2026.10.4
     container_name: beg-os-tunnel
     restart: unless-stopped
     user: "65532:65532"
