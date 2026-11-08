@@ -41,7 +41,7 @@ async def _consumer_loop(
     redis: RedisClient,
     provider: InferenceProvider,
     consumer_id: str,
-    default_tenant_id: str = "family",
+    default_tenant_id: str,
 ) -> None:
     while True:
         result: Optional[tuple] = await redis.read_task(CONSUMER_GROUP, consumer_id)

@@ -1,6 +1,11 @@
 from __future__ import annotations
-from pydantic import Field
+import re
+from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings
+
+# Tenant id rule, duplicated on purpose from the SDK (sdk/belgrade_sdk/context.py);
+# keep in sync. Services must not import across packages.
+_TENANT_ID_RE = re.compile(r"^[a-z0-9]{1,32}$")
 
 
 class Config(BaseSettings):
@@ -10,12 +15,21 @@ class Config(BaseSettings):
     host: str = Field(default="127.0.0.1", validation_alias="MCP_HOST")
     port: int = Field(default=8083, validation_alias="MCP_PORT")
     default_user_id: str = Field(default="", validation_alias="MCP_DEFAULT_USER_ID")
-    default_tenant_id: str = Field(default="", validation_alias="MCP_DEFAULT_TENANT_ID")
+    default_tenant_id: str = Field(default="family", validation_alias="MCP_DEFAULT_TENANT_ID")
     mcp_jwt_secret: str = Field(default="", validation_alias="MCP_JWT_SECRET")
     cf_team_domain: str = Field(default="", validation_alias="CF_TEAM_DOMAIN")
     cf_mcp_audience: str = Field(default="", validation_alias="CF_MCP_AUDIENCE")
     # The repo-root .env is shared by every service; take only our own keys.
     model_config = {"env_file": ".env", "populate_by_name": True, "extra": "ignore"}
+
+    @field_validator("default_tenant_id")
+    @classmethod
+    def check_default_tenant_id(cls, v: str) -> str:
+        if not _TENANT_ID_RE.fullmatch(v):
+            raise ValueError(
+                f"MCP_DEFAULT_TENANT_ID must match ^[a-z0-9]{{1,32}}$ (lowercase letters and digits only), got {v!r}"
+            )
+        return v
 
 
 def load_config() -> Config:

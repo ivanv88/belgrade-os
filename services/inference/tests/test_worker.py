@@ -81,7 +81,7 @@ async def test_publishes_response_chunks_and_done():
         [TextChunk("Hello"), TextChunk(" world"), StreamDone("end_turn")],
     ])
 
-    await process_task(task, mock_redis, provider, "worker-1")
+    await process_task(task, mock_redis, provider, "worker-1", "family")
 
     assert mock_redis.publish_thought.await_count == 3
 
@@ -112,7 +112,7 @@ async def test_all_events_carry_task_metadata():
         [TextChunk("hi"), StreamDone("end_turn")],
     ])
 
-    await process_task(task, mock_redis, provider, "worker-1")
+    await process_task(task, mock_redis, provider, "worker-1", "family")
 
     events = _parse_published_events(mock_redis)
     assert len(events) >= 1
@@ -150,7 +150,7 @@ async def test_tool_use_dispatches_and_continues():
         [TextChunk("Done."), StreamDone("end_turn")],
     ])
 
-    await process_task(task, mock_redis, provider, "worker-1")
+    await process_task(task, mock_redis, provider, "worker-1", "family")
 
     # push_tool_call called once
     assert mock_redis.push_tool_call.await_count == 1
@@ -187,7 +187,7 @@ async def test_exception_publishes_error_event():
     provider = MagicMock()
     provider.generate = MagicMock(side_effect=Exception("API timeout"))
 
-    await process_task(task, mock_redis, provider, "worker-1")
+    await process_task(task, mock_redis, provider, "worker-1", "family")
 
     events = _parse_published_events(mock_redis)
     error_events = [e for e in events if e.type == belgrade_os_pb2.ERROR]
@@ -225,7 +225,7 @@ async def test_execution_mode_forced_untrusted_for_app_tasks():
         [StreamDone("end_turn")],
     ])
 
-    await process_task(task, mock_redis, provider, "worker-1")
+    await process_task(task, mock_redis, provider, "worker-1", "family")
 
     mock_redis.push_untrusted_tool_call.assert_awaited_once()
     mock_redis.push_tool_call.assert_not_awaited()
@@ -258,7 +258,7 @@ async def test_tool_call_carries_tenant_id_from_task():
         [StreamDone("end_turn")],
     ])
 
-    await process_task(task, mock_redis, provider, "worker-1")
+    await process_task(task, mock_redis, provider, "worker-1", "family")
 
     tc_bytes = mock_redis.push_untrusted_tool_call.await_args.args[0]
     tc = belgrade_os_pb2.ToolCall()
@@ -291,7 +291,7 @@ async def test_tool_call_carries_execution_mode_when_no_app_id():
         [StreamDone("end_turn")],
     ])
 
-    await process_task(task, mock_redis, provider, "worker-1")
+    await process_task(task, mock_redis, provider, "worker-1", "family")
 
     mock_redis.push_tool_call.assert_awaited_once()
     mock_redis.push_untrusted_tool_call.assert_not_awaited()
@@ -312,7 +312,7 @@ async def test_cancel_key_stops_loop_and_publishes_error():
 
     provider = MagicMock()   # generate should never be called
 
-    await process_task(task, mock_redis, provider, "worker-1")
+    await process_task(task, mock_redis, provider, "worker-1", "family")
 
     # Cancel key was deleted
     mock_redis.delete.assert_awaited_once_with("tasks:cancel:t-cancel")
@@ -340,7 +340,7 @@ async def test_no_cancel_key_proceeds_normally():
         [TextChunk("hi"), StreamDone("end_turn")],
     ])
 
-    await process_task(task, mock_redis, provider, "worker-1")
+    await process_task(task, mock_redis, provider, "worker-1", "family")
 
     mock_redis.delete.assert_not_awaited()
     events = _parse_published_events(mock_redis)
@@ -362,7 +362,7 @@ async def _dispatched_tenant(task, **kwargs) -> str:
         [StreamDone("tool_use", [ToolUse("c1", "shopping:add", {})])],
         [StreamDone("end_turn")],
     ])
-    await process_task(task, mock_redis, provider, "worker-1", **kwargs)
+    await process_task(task, mock_redis, provider, "worker-1", **{"default_tenant_id": "family", **kwargs})
     tc = belgrade_os_pb2.ToolCall()
     tc.ParseFromString(mock_redis.push_untrusted_tool_call.await_args.args[0])
     return tc.tenant_id

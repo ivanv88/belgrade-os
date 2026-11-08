@@ -1,7 +1,12 @@
+import re
 import socket
 from typing import Literal, Optional
-from pydantic import Field, AliasChoices, model_validator
+from pydantic import Field, AliasChoices, field_validator, model_validator
 from pydantic_settings import BaseSettings
+
+# Tenant id rule, duplicated on purpose from the SDK (sdk/belgrade_sdk/context.py);
+# keep in sync. Services must not import across packages.
+_TENANT_ID_RE = re.compile(r"^[a-z0-9]{1,32}$")
 
 
 class Config(BaseSettings):
@@ -25,6 +30,15 @@ class Config(BaseSettings):
 
     # The repo-root .env is shared by every service; take only our own keys.
     model_config = {"env_file": ".env", "populate_by_name": True, "extra": "ignore"}
+
+    @field_validator("default_tenant_id")
+    @classmethod
+    def check_default_tenant_id(cls, v: str) -> str:
+        if not _TENANT_ID_RE.fullmatch(v):
+            raise ValueError(
+                f"DEFAULT_TENANT_ID must match ^[a-z0-9]{{1,32}}$ (lowercase letters and digits only), got {v!r}"
+            )
+        return v
 
     @model_validator(mode="after")
     def check_credentials(self) -> "Config":

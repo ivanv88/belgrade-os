@@ -42,7 +42,7 @@ async def test_consumer_loop_calls_process_task_then_acks():
     with patch("main.process_task", new_callable=AsyncMock) as mock_process_task:
         try:
             await asyncio.wait_for(
-                _consumer_loop(mock_redis, mock_provider, "w1"),
+                _consumer_loop(mock_redis, mock_provider, "w1", "family"),
                 timeout=1.0,
             )
         except asyncio.TimeoutError:
@@ -87,7 +87,7 @@ async def test_consumer_loop_acks_even_after_error():
         mock_process_task.side_effect = Exception("boom")
         try:
             await asyncio.wait_for(
-                _consumer_loop(mock_redis, mock_provider, "w1"),
+                _consumer_loop(mock_redis, mock_provider, "w1", "family"),
                 timeout=1.0,
             )
         except asyncio.TimeoutError:
@@ -122,7 +122,7 @@ async def test_consumer_loop_continues_on_none_read():
     with patch("main.process_task", new_callable=AsyncMock):
         try:
             await asyncio.wait_for(
-                _consumer_loop(mock_redis, mock_provider, "w1"),
+                _consumer_loop(mock_redis, mock_provider, "w1", "family"),
                 timeout=1.0,
             )
         except asyncio.TimeoutError:

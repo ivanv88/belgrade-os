@@ -1,3 +1,5 @@
+import pytest
+from pydantic import ValidationError
 from config import Config
 
 
@@ -30,3 +32,15 @@ def test_host_defaults_to_loopback(monkeypatch):
 def test_host_from_env(monkeypatch):
     monkeypatch.setenv("MCP_HOST", "172.30.0.1")
     assert Config(_env_file=None).host == "172.30.0.1"
+
+
+def test_default_tenant_id_defaults_to_family(monkeypatch):
+    monkeypatch.delenv("MCP_DEFAULT_TENANT_ID", raising=False)
+    assert Config(_env_file=None).default_tenant_id == "family"
+
+
+@pytest.mark.parametrize("bad", ["household-vladisavljevic", "Family", "a_b", "", "a" * 33])
+def test_default_tenant_id_rejects_invalid(monkeypatch, bad):
+    monkeypatch.setenv("MCP_DEFAULT_TENANT_ID", bad)
+    with pytest.raises(ValidationError, match="MCP_DEFAULT_TENANT_ID"):
+        Config(_env_file=None)

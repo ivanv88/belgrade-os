@@ -78,3 +78,16 @@ def test_default_tenant_id_from_env(monkeypatch):
     monkeypatch.setenv("DEFAULT_TENANT_ID", "acme")
     c = Config(provider="gemini", model="m", google_api_key="k", _env_file=None)
     assert c.default_tenant_id == "acme"
+
+
+def test_default_tenant_id_accepts_family(monkeypatch):
+    monkeypatch.setenv("DEFAULT_TENANT_ID", "family")
+    c = Config(provider="gemini", model="m", google_api_key="k", _env_file=None)
+    assert c.default_tenant_id == "family"
+
+
+@pytest.mark.parametrize("bad", ["household-vladisavljevic", "Family", "a_b", "", "a" * 33])
+def test_default_tenant_id_rejects_invalid(monkeypatch, bad):
+    monkeypatch.setenv("DEFAULT_TENANT_ID", bad)
+    with pytest.raises(ValidationError, match="DEFAULT_TENANT_ID"):
+        Config(provider="gemini", model="m", google_api_key="k", _env_file=None)

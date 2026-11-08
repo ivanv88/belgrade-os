@@ -41,7 +41,7 @@ async def process_task(
     redis: RedisClient,
     provider: InferenceProvider,
     consumer_id: str,
-    default_tenant_id: str = "family",
+    default_tenant_id: str,
 ) -> None:
     """Drive the full inference + tool loop for a single task."""
     messages: list = [{"role": "user", "content": task.prompt}]
