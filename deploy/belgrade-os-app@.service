@@ -1,0 +1,59 @@
+# One sandboxed unit per app, started/stopped by platform_controller (SystemdRunner).
+# Audit findings H1/H2: apps get a throwaway user (not ivan, not in docker), see only
+# their own code + SDK + venv, and can reach only localhost (bridge, Redis, Postgres).
+# @ROOT@ is substituted by scripts/install-systemd.sh.
+[Unit]
+Description=Belgrade OS app — %i
+After=belgrade-os@bridge.service
+# A crash-looping app ends up "failed" instead of restarting forever; the controller's
+# watchdog then retries with backoff.
+StartLimitIntervalSec=60
+StartLimitBurst=5
+
+[Service]
+Type=simple
+DynamicUser=yes
+UMask=0077
+EnvironmentFile=/run/belgrade-os/apps/%i.env
+WorkingDirectory=@ROOT@/apps/%i
+ExecStart=@ROOT@/venv/bin/python3 @ROOT@/apps/%i/main.py
+Environment=PYTHONDONTWRITEBYTECODE=1
+Restart=on-failure
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=beg-os-app-%i
+
+# Filesystem: everything under /home hidden except what the app needs (read-only).
+ProtectHome=tmpfs
+BindReadOnlyPaths=@ROOT@/apps/%i @ROOT@/sdk @ROOT@/venv
+ProtectSystem=strict
+PrivateTmp=yes
+PrivateDevices=yes
+InaccessiblePaths=-/run/docker.sock -/var/run/docker.sock
+NoNewPrivileges=yes
+
+# Processes / kernel
+# (ProcSubset=pid deliberately omitted: libraries such as psutil/platform read
+# /proc/cpuinfo, /proc/meminfo, /proc/stat; ProtectProc=invisible already hides other
+# processes, which is the part that matters.)
+ProtectProc=invisible
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallErrorNumber=EPERM
+CapabilityBoundingSet=
+
+# Network: localhost only — no LAN, no internet.
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+IPAddressDeny=any
+IPAddressAllow=localhost

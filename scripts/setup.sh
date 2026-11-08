@@ -85,6 +85,12 @@ MCP_JWT_SECRET=$(openssl rand -hex 32)
 MCP_DEFAULT_TENANT_ID=family
 MCP_DEFAULT_USER_ID=
 
+# App isolation: per-app DB roles derive passwords from this; apps run as sandboxed units on Linux
+APP_DB_SECRET=$(openssl rand -hex 32)
+CONTROLLER_APP_RUNNER=$( [ "$(uname)" = "Linux" ] && echo systemd || echo subprocess )
+# Tenant used when a request carries none (inference worker); must match ^[a-z0-9]{1,32}$
+DEFAULT_TENANT_ID=family
+
 # Service discovery — override when services run in containers (use container names)
 BEG_OS_BRIDGE_URL=http://localhost:8081
 BRIDGE_URL=http://localhost:8081

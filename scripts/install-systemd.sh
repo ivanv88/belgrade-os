@@ -31,6 +31,15 @@ install -d "$UNIT_DIR/belgrade-os@platform_controller.service.d"
 install -m 644 "$ROOT/deploy/platform_controller-wait-bridge.conf" \
     "$UNIT_DIR/belgrade-os@platform_controller.service.d/wait-bridge.conf"
 
+# Sandboxed app units: started by platform_controller, so deliberately NOT enabled.
+sed -e "s|@ROOT@|$ROOT|g" "$ROOT/deploy/belgrade-os-app@.service" > "$UNIT_DIR/belgrade-os-app@.service"
+install -m 644 "$ROOT/deploy/platform_controller-runtime-dir.conf" \
+    "$UNIT_DIR/belgrade-os@platform_controller.service.d/runtime-dir.conf"
+# Let the controller user start/stop/restart app units (and nothing else) without a prompt.
+install -d /etc/polkit-1/rules.d
+sed -e "s|@USER@|$RUN_USER|g" "$ROOT/deploy/50-belgrade-os.rules" > /etc/polkit-1/rules.d/50-belgrade-os.rules
+chmod 644 /etc/polkit-1/rules.d/50-belgrade-os.rules
+
 systemctl daemon-reload
 systemctl enable belgrade-os.target
 for svc in "${SERVICES[@]}"; do
