@@ -36,16 +36,19 @@ sed -e "s|@ROOT@|$ROOT|g" "$ROOT/deploy/belgrade-os-app@.service" > "$UNIT_DIR/b
 install -m 644 "$ROOT/deploy/platform_controller-runtime-dir.conf" \
     "$UNIT_DIR/belgrade-os@platform_controller.service.d/runtime-dir.conf"
 # Let the controller user start/stop/restart app units (and nothing else) without a prompt.
-install -d /etc/polkit-1/rules.d
+[ -d /etc/polkit-1/rules.d ] || install -d -m 0755 /etc/polkit-1/rules.d
 sed -e "s|@USER@|$RUN_USER|g" "$ROOT/deploy/50-belgrade-os.rules" > /etc/polkit-1/rules.d/50-belgrade-os.rules
 chmod 644 /etc/polkit-1/rules.d/50-belgrade-os.rules
 
 systemctl daemon-reload
+# Apply the RuntimeDirectory drop-in on an already-running controller (no-op if stopped).
+systemctl try-restart belgrade-os@platform_controller.service
 systemctl enable belgrade-os.target
 for svc in "${SERVICES[@]}"; do
     systemctl enable "belgrade-os@$svc.service"
 done
 
 echo "Installed for user $RUN_USER at $ROOT: ${SERVICES[*]}"
+echo "Restarted platform_controller if it was running (picks up the runtime-dir drop-in)."
 echo "Start with: sudo systemctl start belgrade-os.target"
 echo "Logs:       journalctl -u 'belgrade-os@*' -f"

@@ -5,6 +5,8 @@
 [Unit]
 Description=Belgrade OS app — %i
 After=belgrade-os@bridge.service
+# Stopping the platform target stops apps too; restarting only the controller does not.
+PartOf=belgrade-os.target
 # A crash-looping app ends up "failed" instead of restarting forever; the controller's
 # watchdog then retries with backoff.
 StartLimitIntervalSec=60
@@ -30,6 +32,9 @@ BindReadOnlyPaths=@ROOT@/apps/%i @ROOT@/sdk @ROOT@/venv
 ProtectSystem=strict
 PrivateTmp=yes
 PrivateDevices=yes
+# ProtectSystem=strict makes the FS read-only, not invisible; /mnt/storage holds family
+# data and backups, so hide the usual data mount points entirely.
+TemporaryFileSystem=/mnt:ro /srv:ro /opt:ro
 InaccessiblePaths=-/run/docker.sock -/var/run/docker.sock
 NoNewPrivileges=yes
 

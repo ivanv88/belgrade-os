@@ -145,7 +145,7 @@ Key message types: `Task`, `ToolCall`, `ToolResult`, `ThoughtEvent`, `Tool`, `Ap
 | mcp_server | `MCP_DEFAULT_TENANT_ID` | — | Fallback tenant identity |
 | platform_controller | `CONTROLLER_APP_RUNNER` | `subprocess` | `systemd` runs apps as sandboxed `belgrade-os-app@<id>` units (Linux) |
 | platform_controller | `CONTROLLER_APP_ENV_DIR` | `/run/belgrade-os/apps` | Per-app env files (0600) read by systemd |
-| platform_controller | `APP_DB_SECRET` | — | Required, >= 32 chars; per-app DB role passwords derive from it |
+| platform_controller | `APP_DB_SECRET` | — | Required when `CONTROLLER_APP_RUNNER=systemd` (≥32 chars); per-app DB role passwords derive from it |
 | inference | `DEFAULT_TENANT_ID` | `family` | Tenant when a request carries none; `^[a-z0-9]{1,32}$` |
 
 ### Integration tests
