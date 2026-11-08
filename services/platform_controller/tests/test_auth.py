@@ -72,9 +72,11 @@ def test_reload_rejects_empty_app_id():
     assert resp.status_code == 400
 
 
-def test_reload_accepts_valid_app_id():
+def test_reload_accepts_valid_app_id(tmp_path):
     client, m = _get_client("test-secret")
-    with patch.object(m.app_supervisor, "start_app", new_callable=AsyncMock):
+    (tmp_path / "my_app_01").mkdir()
+    with patch.object(m.app_supervisor, "apps_root", tmp_path), \
+            patch.object(m.app_supervisor, "start_app", new_callable=AsyncMock):
         resp = client.post(
             "/apps/reload",
             json={"app_id": "my_app_01"},

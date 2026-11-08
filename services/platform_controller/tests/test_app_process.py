@@ -515,14 +515,14 @@ def test_watchdog_continues_when_one_restart_raises(tmp_path, caplog):
         await sup.start_app("b")
         runner.alive.clear()
         runner.started.clear()
-        original = sup.start_app
+        original = sup._start_app_locked
 
         async def flaky(app_id):
             if app_id == "a":
                 raise OSError("disk gone")
-            await original(app_id)
+            return await original(app_id)
 
-        sup.start_app = flaky
+        sup._start_app_locked = flaky
         await sup._watch_tick()
 
     with caplog.at_level("ERROR"):
@@ -722,6 +722,201 @@ def test_start_app_returns_whether_it_started(tmp_path):
     assert asyncio.run(AppSupervisor(apps_root=tmp_path, runner=Bad()).start_app("shop")) is False
 
 
+class Clock:
+    def __init__(self):
+        self.t = 1000.0
+
+    def __call__(self):
+        return self.t
+
+
+class Failing(FakeRunner):
+    def __init__(self):
+        super().__init__()
+        self.attempts = 0
+        self.fail = True
+
+    async def start(self, app_id, app_dir, env):
+        self.attempts += 1
+        if self.fail:
+            raise RuntimeError("nope")
+        await super().start(app_id, app_dir, env)
+
+
+def test_failed_app_is_not_retried_every_tick_and_backs_off_exponentially(tmp_path):
+    from main import AppSupervisor
+    _mk_app(tmp_path, "shop")
+    runner = Failing()
+    sup = AppSupervisor(apps_root=tmp_path, runner=runner)
+    clock = Clock()
+    sup._now = clock
+
+    async def go():
+        await sup.start_app("shop")           # failure 1 -> next retry in 10s
+        assert runner.attempts == 1
+        await sup._watch_tick()
+        assert runner.attempts == 1           # too early
+        clock.t += 9.9
+        await sup._watch_tick()
+        assert runner.attempts == 1
+        clock.t += 0.2
+        await sup._watch_tick()
+        assert runner.attempts == 2           # failure 2 -> 20s
+        clock.t += 19
+        await sup._watch_tick()
+        assert runner.attempts == 2
+        clock.t += 2
+        await sup._watch_tick()
+        assert runner.attempts == 3           # failure 3 -> 40s
+
+    asyncio.run(go())
+
+
+def test_backoff_is_capped_at_300_seconds(tmp_path):
+    from main import AppSupervisor
+    _mk_app(tmp_path, "shop")
+    runner = Failing()
+    sup = AppSupervisor(apps_root=tmp_path, runner=runner)
+    clock = Clock()
+    sup._now = clock
+
+    async def go():
+        await sup.start_app("shop")
+        for _ in range(9):
+            clock.t += 301
+            await sup._watch_tick()
+        n = runner.attempts
+        clock.t += 299
+        await sup._watch_tick()
+        assert runner.attempts == n
+        clock.t += 2
+        await sup._watch_tick()
+        assert runner.attempts == n + 1
+
+    asyncio.run(go())
+
+
+def test_backoff_attempts_reset_after_success(tmp_path):
+    from main import AppSupervisor
+    _mk_app(tmp_path, "shop")
+    runner = Failing()
+    sup = AppSupervisor(apps_root=tmp_path, runner=runner)
+    clock = Clock()
+    sup._now = clock
+
+    async def go():
+        await sup.start_app("shop")
+        clock.t += 11
+        await sup._watch_tick()               # failure 2
+        runner.fail = False
+        clock.t += 21
+        await sup._watch_tick()               # success
+        assert "shop" in sup.running_apps and "shop" not in sup.failed_apps
+        runner.fail = True
+        runner.alive.clear()
+        before = runner.attempts
+        await sup._watch_tick()               # dead -> restart fails, failure 1 again
+        assert runner.attempts == before + 1
+        clock.t += 9.9
+        await sup._watch_tick()
+        assert runner.attempts == before + 1
+        clock.t += 0.2
+        await sup._watch_tick()
+        assert runner.attempts == before + 2
+
+    asyncio.run(go())
+
+
+def test_watchdog_does_not_restart_app_stopped_after_its_liveness_check(tmp_path):
+    from main import AppSupervisor
+    _mk_app(tmp_path, "shop")
+
+    class StopsDuringCheck(FakeRunner):
+        sup = None
+
+        async def is_running(self, app_id):
+            alive = await super().is_running(app_id)
+            if self.sup is not None:
+                s, self.sup = self.sup, None
+                self.alive.discard(app_id)
+                await s.stop_app(app_id)      # lands between check and restart
+                return False
+            return alive
+
+    runner = StopsDuringCheck()
+    sup = AppSupervisor(apps_root=tmp_path, runner=runner)
+
+    async def go():
+        await sup.start_app("shop")
+        runner.started.clear()
+        runner.sup = sup
+        await sup._watch_tick()
+
+    asyncio.run(go())
+    assert runner.started == {} and "shop" not in sup.running_apps
+
+
+def test_watchdog_does_not_double_restart_app_reloaded_meanwhile(tmp_path):
+    from main import AppSupervisor
+    _mk_app(tmp_path, "shop")
+    runner = FakeRunner()
+    sup = AppSupervisor(apps_root=tmp_path, runner=runner)
+
+    async def go():
+        await sup.start_app("shop")
+        runner.alive.discard("shop")
+        runner.started.clear()
+        starts = []
+        orig = runner.start
+
+        async def counting(app_id, d, env):
+            starts.append(app_id)
+            await orig(app_id, d, env)
+
+        runner.start = counting
+        t = asyncio.create_task(sup._restart_if_needed("shop"))
+        await sup.start_app("shop")           # reload wins the lock or the watchdog does
+        await t
+        assert starts == ["shop"]
+
+    asyncio.run(go())
+
+
+def test_stop_app_clears_failed_state_and_backoff(tmp_path):
+    from main import AppSupervisor
+    _mk_app(tmp_path, "shop")
+    runner = Failing()
+    sup = AppSupervisor(apps_root=tmp_path, runner=runner)
+    sup._now = Clock()
+
+    async def go():
+        await sup.start_app("shop")
+        assert "shop" in sup.failed_apps and sup._backoff
+        await sup.stop_app("shop")
+
+    asyncio.run(go())
+    assert "shop" not in sup.failed_apps and not sup._backoff
+
+
+def test_unexpected_start_error_removes_app_from_running_apps(tmp_path):
+    from main import AppSupervisor
+    _mk_app(tmp_path, "shop")
+    sup = AppSupervisor(apps_root=tmp_path, runner=FakeRunner())
+
+    async def go():
+        await sup.start_app("shop")
+        assert "shop" in sup.running_apps
+
+        async def boom(app_id):
+            raise KeyError("x")
+
+        sup._start_app_locked = boom
+        assert await sup._start_isolated("shop") is False
+
+    asyncio.run(go())
+    assert "shop" not in sup.running_apps and "shop" in sup.failed_apps
+
+
 def test_failed_start_is_retried_by_the_watchdog_until_it_works(tmp_path):
     from main import AppSupervisor
 
@@ -735,13 +930,17 @@ def test_failed_start_is_retried_by_the_watchdog_until_it_works(tmp_path):
 
     _mk_app(tmp_path, "shop")
     sup = AppSupervisor(apps_root=tmp_path, runner=Flaky())
+    clock = Clock()
+    sup._now = clock
 
     async def go():
         await sup.start_app("shop")
         assert sup.failed_apps == {"shop"} and "shop" not in sup.running_apps
+        clock.t += 10
         await sup._watch_tick()
         assert sup.failed_apps == {"shop"}
         Flaky.fail = False
+        clock.t += 20
         await sup._watch_tick()
 
     asyncio.run(go())
@@ -755,14 +954,14 @@ def test_failed_apps_do_not_block_other_retries_when_one_raises(tmp_path):
     runner = FakeRunner()
     sup = AppSupervisor(apps_root=tmp_path, runner=runner)
     sup.failed_apps = {"a", "b"}
-    original = sup.start_app
+    original = sup._start_app_locked
 
     async def flaky(app_id):
         if app_id == "a":
             raise KeyError("x")
         return await original(app_id)
 
-    sup.start_app = flaky
+    sup._start_app_locked = flaky
     asyncio.run(sup._watch_tick())
     assert "b" in runner.started and "a" in sup.failed_apps
 
@@ -794,6 +993,20 @@ def test_reload_succeeds_for_a_good_app(tmp_path, monkeypatch):
     _mk_app(tmp_path, "shop")
     client, h = _client(monkeypatch, AppSupervisor(apps_root=tmp_path, runner=FakeRunner()))
     assert client.post("/apps/reload", json={"app_id": "shop"}, headers=h).status_code == 200
+
+
+def test_reload_unknown_app_is_404(tmp_path, monkeypatch):
+    from main import AppSupervisor
+    client, h = _client(monkeypatch, AppSupervisor(apps_root=tmp_path, runner=FakeRunner()))
+    assert client.post("/apps/reload", json={"app_id": "ghost"}, headers=h).status_code == 404
+
+
+def test_reload_manifest_only_and_container_apps_still_200(tmp_path, monkeypatch):
+    from main import AppSupervisor
+    (tmp_path / "ui").mkdir()
+    (tmp_path / "ui" / "manifest.json").write_text("{}")
+    client, h = _client(monkeypatch, AppSupervisor(apps_root=tmp_path, runner=FakeRunner()))
+    assert client.post("/apps/reload", json={"app_id": "ui"}, headers=h).status_code == 200
 
 
 @pytest.mark.parametrize("bad", ["My-App", "my-app", "UPPER", "x" * 60, ""])

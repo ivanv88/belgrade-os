@@ -186,6 +186,9 @@ class AppSupervisor:
         # Apps whose last start failed; the watchdog keeps retrying them.
         self.failed_apps: set[str] = set()
         self._locks: Dict[str, asyncio.Lock] = {}
+        # Per-app retry backoff for failed starts: app_id -> (consecutive failures, next retry time).
+        self._backoff: Dict[str, tuple[int, float]] = {}
+        self._now: Callable[[], float] = time.monotonic
         # Ports are sticky per app_id so restarts keep the bridge callback URL valid.
         self.app_ports: Dict[str, int] = {}
         self.next_port = 9001
@@ -211,8 +214,20 @@ class AppSupervisor:
             return await self.start_app(app_id)
         except Exception:
             logger.exception("Unexpected error starting app %s", app_id)
-            self.failed_apps.add(app_id)
+            self._mark_failed(app_id)
             return False
+
+    def _mark_failed(self, app_id: str) -> None:
+        """Record a failed start: not running, queued for retry with exponential backoff."""
+        self.running_apps.pop(app_id, None)
+        self.failed_apps.add(app_id)
+        attempts = self._backoff.get(app_id, (0, 0.0))[0] + 1
+        delay = min(10 * 2 ** (attempts - 1), 300)
+        self._backoff[app_id] = (attempts, self._now() + delay)
+
+    def _mark_ok(self, app_id: str) -> None:
+        self.failed_apps.discard(app_id)
+        self._backoff.pop(app_id, None)
 
     async def start_app(self, app_id: str) -> bool:
         """Start (or restart) an app. True if it is running or needs no process."""
@@ -229,7 +244,7 @@ class AppSupervisor:
                 data = json.loads(manifest_path.read_text(encoding="utf-8"))
                 if data.get("runtime") == "container":
                     logger.info("App %s is a container app — skipping process management", app_id)
-                    self.failed_apps.discard(app_id)
+                    self._mark_ok(app_id)
                     return True
             except (json.JSONDecodeError, OSError):
                 pass  # Let AppProcess validate fully below
@@ -238,7 +253,7 @@ class AppSupervisor:
         # Spawning them would crash-loop under the watchdog.
         if not (app_path / "main.py").exists():
             logger.info("App %s has no main.py — skipping process management", app_id)
-            self.failed_apps.discard(app_id)
+            self._mark_ok(app_id)
             return True
 
         if app_id not in self.app_ports:
@@ -252,12 +267,11 @@ class AppSupervisor:
             await self.runner.start(app_id, app_path, env)
         except (ValueError, RuntimeError, OSError) as exc:
             logger.error("Skipping app %s — %s", app_id, exc)
-            self.running_apps.pop(app_id, None)
-            self.failed_apps.add(app_id)
+            self._mark_failed(app_id)
             return False
 
         self.running_apps[app_id] = app_process
-        self.failed_apps.discard(app_id)
+        self._mark_ok(app_id)
         return True
 
     async def stop_app(self, app_id: str):
@@ -269,6 +283,30 @@ class AppSupervisor:
                     logger.error("Failed to stop app %s — %s", app_id, exc)
                     return  # still running as far as we know; keep it visible
                 del self.running_apps[app_id]
+            # A deliberately stopped app must not be retried by the watchdog.
+            self._mark_ok(app_id)
+
+    async def _restart_if_needed(self, app_id: str) -> None:
+        """Under the app's lock, re-check that a restart is still wanted, then start it."""
+        async with self._lock(app_id):
+            try:
+                if app_id in self.running_apps:
+                    try:
+                        if await self.runner.is_running(app_id) is True:
+                            return
+                    except Exception as exc:
+                        logger.error("status check of app %s failed: %r", app_id, exc)
+                    logger.warning("app %s is not running — restarting", app_id)
+                elif app_id in self.failed_apps:
+                    if self._now() < self._backoff.get(app_id, (0, 0.0))[1]:
+                        return
+                    logger.warning("retrying failed start of app %s", app_id)
+                else:
+                    return  # stopped or reloaded meanwhile
+                await self._start_app_locked(app_id)
+            except Exception:
+                logger.exception("Unexpected error starting app %s", app_id)
+                self._mark_failed(app_id)
 
     async def _watch_tick(self) -> None:
         """Restart apps that have exited, and retry apps whose last start failed."""
@@ -281,11 +319,11 @@ class AppSupervisor:
             if isinstance(ok, Exception):
                 logger.error("status check of app %s failed: %r", app_id, ok)
         for app_id in dead:
-            logger.warning("app %s is not running — restarting", app_id)
-            await self._start_isolated(app_id)
+            await self._restart_if_needed(app_id)
+        now = self._now()
         for app_id in sorted(self.failed_apps - set(dead)):
-            logger.warning("retrying failed start of app %s", app_id)
-            await self._start_isolated(app_id)
+            if now >= self._backoff.get(app_id, (0, 0.0))[1]:
+                await self._restart_if_needed(app_id)
 
     async def watch(self, interval: int = 10) -> None:
         """Background loop: call _watch_tick every `interval` seconds."""
@@ -614,6 +652,8 @@ async def startup_event():
 async def reload_app(action: AppAction, _: None = Depends(_require_token)):
     if not _RELOAD_APP_ID_RE.match(action.app_id):
         raise HTTPException(status_code=400, detail="invalid app_id: must match ^[a-z0-9_]{1,59}$")
+    if not (app_supervisor.apps_root / action.app_id).is_dir():
+        raise HTTPException(status_code=404, detail=f"app {action.app_id} not found")
     if not await app_supervisor.start_app(action.app_id):
         raise HTTPException(status_code=502, detail=f"app {action.app_id} failed to start; see controller logs")
     return {"status": "reloaded", "app_id": action.app_id}
