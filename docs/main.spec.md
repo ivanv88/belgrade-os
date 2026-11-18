@@ -1,6 +1,6 @@
 # Belgrade AI OS: Vision & Roadmap
 
-**Version:** 2.0.0
+**Version:** 2.1.0
 **Host:** Lenovo i5 10th gen IdeaPad (12GB RAM, Pop!_OS headless)
 **Storage:** `/mnt/storage` (HDD)
 **Security:** Cloudflare Zero Trust (Email OTP)
@@ -90,9 +90,11 @@ at registration time.
 ## 4. Security & Data Policy
 
 - **Access Control:** Restricted to specific emails via Cloudflare Zero Trust
-- **Persistence:** Live data in `/data/postgres` and `/mnt/storage` — git-ignored, never committed
-- **Secrets:** Managed via `.env` file only
-- **Family data:** Never leaves the Pi — Supabase is for metadata and AI logs only
+- **Persistence:** Postgres/Redis in Docker named volumes (`beg-os-pg-data`, `beg-os-redis-data`); family files under `/mnt/storage` — never committed
+- **Secrets:** Managed via `.env` (`0600`) only; apps receive an env allowlist via a per-app `0600` file, never the platform `.env`
+- **App isolation:** In production each app runs as a sandboxed systemd unit (`belgrade-os-app@<id>`) with its own dynamic user, read-only view of only its code + SDK + venv, localhost-only network, and its own non-superuser Postgres role (`app_<id>`)
+- **Network:** Internal services listen on localhost; only `mcp.beg-os.fyi` is published via the tunnel; host firewall default-deny
+- **Family data:** Never leaves the Lenovo — Supabase is for metadata and AI logs only
 
 ---
 
@@ -124,10 +126,20 @@ at registration time.
 
 Focus: validate the platform with real apps, close known gaps before adding new features.
 
-- [ ] **First App (Shopping List)**: `apps/shopping/main.py` is a stub (one tool, no DB, no inference, no vault). Needs a real implementation — inference workflows, vault writes, notifications, scheduled tasks — to validate the full stack end-to-end.
+**Done:**
+- [x] **First App (Shopping List)** — in daily use since 2026-10-23: household list backed by Postgres (`add_item`, `list_items`, `check_item`, `remove_item`, …), used from Claude Desktop over MCP.
+- [x] **Claude Desktop access**: local stdio MCP proxy (`tools/mcp_proxy/`) → `mcp.beg-os.fyi` (Cloudflare Access service token) → tunnel → MCP Server.
+- [x] **Hybrid deployment**: Redis, Postgres and cloudflared in Docker (named volumes, pinned images); platform services as `belgrade-os@<service>` systemd units under `belgrade-os.target`.
+- [x] **Network hardening**: services bound to localhost, ufw default-deny, key-only SSH, Redis ACLs.
+- [x] **App isolation (H1–H4)**: pluggable app runner (`subprocess` for dev, sandboxed systemd for prod), one dynamic user per app, per-app non-superuser Postgres roles, SDK refuses schemas owned by another role. Deployed and verified on the Lenovo 2026-11-18.
+
+**Open:**
+- [ ] **Shopping — rest of the stack**: shopping uses only `ctx.db` + MCP. Exercise the remaining SDK surface with a real use case — notifications, scheduled tasks, vault writes, inference workflows.
 - [ ] **Filesystem Hot-Reload**: Platform Controller has explicit `POST /apps/reload` and a crash-restart watchdog, but no filesystem watcher. Add inotify-based watch on `apps/` so edits to `main.py` or `manifest.json` trigger a reload automatically.
 - [ ] **Dashboard — Dynamic App Discovery**: Current dashboard has a hardcoded sidebar (`shopping` only). Replace with a call to Platform Controller `/apps` to list running apps and build nav dynamically, with status indicators.
 - [ ] **Firebase Notification Driver**: `services/notification/drivers/` has the interface (`base.py`) and ntfy implementation. Firebase driver would unlock mobile push.
+- [ ] **Security follow-ups** (see Obsidian *Beg-OS Security Notes*): M1 — apps may only schedule their own tools (`<app_id>:` prefix); M2 — per-service env files instead of one shared `.env`; M4 — per-person MCP tokens with expiry.
+- [ ] **Tech debt**: migrate the Gemini provider from deprecated `google-generativeai` to `google-genai`; `demo_app` — fix or remove.
 
 ### 🔮 Phase 3: External Connectivity
 

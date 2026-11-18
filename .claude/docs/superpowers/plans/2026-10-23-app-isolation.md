@@ -37,7 +37,7 @@ Test DB for integration tests: `BEG_OS_TEST_DB_URL` (default `postgresql+asyncpg
 - Create: `services/platform_controller/app_db.py`
 - Test: `services/platform_controller/tests/test_app_db.py`
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 ```python
 # services/platform_controller/tests/test_app_db.py
@@ -161,12 +161,12 @@ async def test_rotating_the_secret_updates_the_password(admin_engine):
         await _drop_role(admin_engine, role)
 ```
 
-- [ ] **Step 2: Run to verify failure**
+- [x] **Step 2: Run to verify failure**
 
 Run: `cd services/platform_controller && ../../venv/bin/python3 -m pytest tests/test_app_db.py -q`
 Expected: collection error `ModuleNotFoundError: No module named 'app_db'`
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 ```python
 # services/platform_controller/app_db.py
@@ -230,12 +230,12 @@ async def ensure_app_role(conn: AsyncConnection, role: str, password: str, datab
     await conn.execute(text(f"GRANT CONNECT, CREATE ON DATABASE {database} TO {role}"))
 ```
 
-- [ ] **Step 4: Run tests — all pass**
+- [x] **Step 4: Run tests — all pass**
 
 Run: `cd services/platform_controller && ../../venv/bin/python3 -m pytest tests/test_app_db.py -q`
 Expected: `6 passed` (needs the test Postgres on 5433; otherwise 4 passed, 2 skipped)
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add services/platform_controller/app_db.py services/platform_controller/tests/test_app_db.py
@@ -252,7 +252,7 @@ Why: with per-app roles, app A could `CREATE SCHEMA app_family_b` before app B d
 - Modify: `sdk/belgrade_sdk/context.py` (the `db` property, after `CREATE SCHEMA IF NOT EXISTS`)
 - Test: `sdk/tests/test_db_isolation.py`
 
-- [ ] **Step 1: Write the failing test** (append)
+- [x] **Step 1: Write the failing test** (append)
 
 ```python
 async def test_refuses_schema_owned_by_another_role(engine):
@@ -274,12 +274,12 @@ async def test_refuses_schema_owned_by_another_role(engine):
             await conn.execute(text(f"DROP ROLE IF EXISTS {squatter}"))
 ```
 
-- [ ] **Step 2: Run to verify failure**
+- [x] **Step 2: Run to verify failure**
 
 Run: `cd sdk && ../venv/bin/python3 -m pytest tests/test_db_isolation.py -q -k squat`
 Expected: FAIL — `DID NOT RAISE <class 'PermissionError'>`
 
-- [ ] **Step 3: Implement** — in `AppContext.db`, replace the schema block:
+- [x] **Step 3: Implement** — in `AppContext.db`, replace the schema block:
 
 ```python
             if schema_name:
@@ -300,12 +300,12 @@ Expected: FAIL — `DID NOT RAISE <class 'PermissionError'>`
                 await self._db_conn.commit()
 ```
 
-- [ ] **Step 4: Run all SDK tests**
+- [x] **Step 4: Run all SDK tests**
 
 Run: `cd sdk && ../venv/bin/python3 -m pytest -q`
 Expected: all pass (39)
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add sdk/belgrade_sdk/context.py sdk/tests/test_db_isolation.py
@@ -320,7 +320,7 @@ git commit -m "fix(sdk): refuse a tenant schema owned by another role"
 - Create: `services/platform_controller/app_runner.py`
 - Test: `services/platform_controller/tests/test_app_runner.py`
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 ```python
 # services/platform_controller/tests/test_app_runner.py
@@ -403,12 +403,12 @@ def test_subprocess_runner_spawns_and_tracks(tmp_path):
     assert runner.is_running("shopping") is False
 ```
 
-- [ ] **Step 2: Run to verify failure**
+- [x] **Step 2: Run to verify failure**
 
 Run: `cd services/platform_controller && ../../venv/bin/python3 -m pytest tests/test_app_runner.py -q`
 Expected: `ModuleNotFoundError: No module named 'app_runner'`
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 ```python
 # services/platform_controller/app_runner.py
@@ -513,12 +513,12 @@ class SystemdRunner:
         return pid or None
 ```
 
-- [ ] **Step 4: Run tests — all pass**
+- [x] **Step 4: Run tests — all pass**
 
 Run: `cd services/platform_controller && ../../venv/bin/python3 -m pytest tests/test_app_runner.py -q`
 Expected: `6 passed`
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add services/platform_controller/app_runner.py services/platform_controller/tests/test_app_runner.py
@@ -535,7 +535,7 @@ git commit -m "feat(platform_controller): subprocess and sandboxed systemd app r
 - Modify: `services/platform_controller/tests/test_app_process.py` (watchdog tests use a fake runner)
 - Test: `services/platform_controller/tests/test_config.py`, `tests/test_app_process.py`
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 Append to `tests/test_config.py`:
 ```python
@@ -625,12 +625,12 @@ def test_watchdog_restarts_app_its_runner_reports_dead(tmp_path):
 
 Delete `test_watchdog_restarts_dead_app` and `test_watchdog_does_not_restart_live_app` (they poke `AppProcess.process`, which no longer exists; the new watchdog test covers both cases).
 
-- [ ] **Step 2: Run to verify failure**
+- [x] **Step 2: Run to verify failure**
 
 Run: `cd services/platform_controller && ../../venv/bin/python3 -m pytest -q`
 Expected: failures for the 5 new tests (`AttributeError: 'Config' object has no attribute 'app_runner'`, `TypeError: AppSupervisor.__init__() got an unexpected keyword argument 'runner'`)
 
-- [ ] **Step 3: Implement config** — in `config.py` `Config`, add:
+- [x] **Step 3: Implement config** — in `config.py` `Config`, add:
 
 ```python
     # How apps run: "subprocess" (dev) or "systemd" (sandboxed units, production).
@@ -643,7 +643,7 @@ Expected: failures for the 5 new tests (`AttributeError: 'Config' object has no 
 ```
 and `from typing import Literal` at the top.
 
-- [ ] **Step 4: Implement `main.py`**
+- [x] **Step 4: Implement `main.py`**
 
 1. Imports: `from app_runner import SubprocessRunner, SystemdRunner` and `from app_db import app_db_url, app_role_name, app_role_password, ensure_app_role`; add `Awaitable, Callable` to the `typing` import.
 
@@ -764,12 +764,12 @@ async def list_apps():
     }
 ```
 
-- [ ] **Step 5: Run controller tests**
+- [x] **Step 5: Run controller tests**
 
 Run: `cd services/platform_controller && ../../venv/bin/python3 -m pytest -q`
 Expected: all pass
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add services/platform_controller
@@ -784,7 +784,7 @@ git commit -m "feat(platform_controller): run apps via pluggable runner with per
 - Create: `deploy/belgrade-os-app@.service`, `deploy/50-belgrade-os.rules`, `deploy/platform_controller-runtime-dir.conf`
 - Modify: `scripts/install-systemd.sh`, `scripts/setup.sh`
 
-- [ ] **Step 1: App unit template**
+- [x] **Step 1: App unit template**
 
 ```ini
 # deploy/belgrade-os-app@.service
@@ -838,7 +838,7 @@ IPAddressDeny=any
 IPAddressAllow=localhost
 ```
 
-- [ ] **Step 2: polkit rule**
+- [x] **Step 2: polkit rule**
 
 ```js
 // deploy/50-belgrade-os.rules — @USER@ substituted by scripts/install-systemd.sh.
@@ -857,7 +857,7 @@ polkit.addRule(function (action, subject) {
 });
 ```
 
-- [ ] **Step 3: Controller runtime-dir drop-in**
+- [x] **Step 3: Controller runtime-dir drop-in**
 
 ```ini
 # deploy/platform_controller-runtime-dir.conf
@@ -869,7 +869,7 @@ RuntimeDirectoryMode=0700
 RuntimeDirectoryPreserve=yes
 ```
 
-- [ ] **Step 4: Installer** — in `scripts/install-systemd.sh`, after the existing drop-in install, add:
+- [x] **Step 4: Installer** — in `scripts/install-systemd.sh`, after the existing drop-in install, add:
 
 ```bash
 sed -e "s|@ROOT@|$ROOT|g" "$ROOT/deploy/belgrade-os-app@.service" > "$UNIT_DIR/belgrade-os-app@.service"
@@ -879,7 +879,7 @@ sed -e "s|@USER@|$RUN_USER|g" "$ROOT/deploy/50-belgrade-os.rules" > /etc/polkit-
 chmod 644 /etc/polkit-1/rules.d/50-belgrade-os.rules
 ```
 
-- [ ] **Step 5: `.env` template** — in `scripts/setup.sh` `generate_env`, after `MCP_DEFAULT_USER_ID=`:
+- [x] **Step 5: `.env` template** — in `scripts/setup.sh` `generate_env`, after `MCP_DEFAULT_USER_ID=`:
 
 ```bash
 # App isolation: per-app DB roles derive passwords from this; apps run as sandboxed units on Linux
@@ -887,7 +887,7 @@ APP_DB_SECRET=$(openssl rand -hex 32)
 CONTROLLER_APP_RUNNER=$( [ "$(uname)" = "Linux" ] && echo systemd || echo subprocess )
 ```
 
-- [ ] **Step 6: Verify syntax**
+- [x] **Step 6: Verify syntax**
 
 Run on the Mac: `bash -n scripts/install-systemd.sh && bash -n scripts/setup.sh`
 Run on the Lenovo after `git pull` (no sudo needed):
@@ -897,7 +897,7 @@ d=$(mktemp -d) && sed "s|@ROOT@|$PWD|g" deploy/belgrade-os-app@.service > "$d/be
 ```
 Expected: no "Unknown key" / "Invalid" lines (a missing `/run/belgrade-os/apps/test.env` warning is fine).
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 git add deploy scripts
@@ -908,10 +908,10 @@ git commit -m "feat(deploy): sandboxed per-app systemd units, polkit rule, insta
 
 ### Task 6: Deploy, migrate, verify on the Lenovo
 
-- [ ] **Step 1: Full test suite on the Mac** — `make test` (test Postgres on 5433, Redis on 6379). Push.
-- [ ] **Step 2: Lenovo** — `git pull`; append to `.env`: `APP_DB_SECRET=<openssl rand -hex 32>` and `CONTROLLER_APP_RUNNER=systemd`.
-- [ ] **Step 3: Owner runs (sudo)** — `ssh -t lenovo 'sudo ~/server/projects/belgrade-os/scripts/install-systemd.sh'`
-- [ ] **Step 4: Migrate the existing shopping schema** (owned by the platform superuser today):
+- [x] **Step 1: Full test suite on the Mac** — `make test` (test Postgres on 5433, Redis on 6379). Push.
+- [x] **Step 2: Lenovo** — `git pull`; append to `.env`: `APP_DB_SECRET=<openssl rand -hex 32>` and `CONTROLLER_APP_RUNNER=systemd`.
+- [x] **Step 3: Owner runs (sudo)** — `ssh -t lenovo 'sudo ~/server/projects/belgrade-os/scripts/install-systemd.sh'`
+- [x] **Step 4: Migrate the existing shopping schema** (owned by the platform superuser today):
 
 ```bash
 ssh lenovo 'docker exec beg-os-db psql -U laurent -d belgrade_os -v ON_ERROR_STOP=1 -c "
@@ -921,7 +921,7 @@ ssh lenovo 'docker exec beg-os-db psql -U laurent -d belgrade_os -v ON_ERROR_STO
 ```
 (`ALTER TABLE ... OWNER` also moves the `items_id_seq` sequence it owns. The controller sets the role's login/password on start.)
 
-- [ ] **Step 5: Restart the controller** (kill its MainPID; systemd restarts it and, via `KillMode=control-group`, also stops the old child-process apps). On start it provisions `app_shopping`, writes `/run/belgrade-os/apps/shopping.env`, and starts `belgrade-os-app@shopping.service`.
-- [ ] **Step 6: Verify isolation** with a throwaway probe app run under the same template (`apps/zz_probe/main.py`, not committed): it tries `open('<ROOT>/.env')`, connects to `/var/run/docker.sock`, `192.168.68.1:80`, `1.1.1.1:443`, and `127.0.0.1:8081`, prints results, exits. Start via `systemctl start belgrade-os-app@zz_probe` (allowed by polkit) after writing its env file; read `journalctl -u belgrade-os-app@zz_probe`. Expected: `.env` → not found, docker.sock → not found/denied, LAN and internet → blocked, bridge → reachable. Then remove the probe.
-- [ ] **Step 7: Verify the app** — `systemctl show belgrade-os-app@shopping -p User,MainPID`; `ps -o user= -p <pid>` is not `ivan`; Postgres `SELECT rolsuper FROM pg_roles WHERE rolname='app_shopping'` → `f`; `systemd-analyze security belgrade-os-app@shopping` exposure ≤ 3.0; end-to-end `list_items` through the MCP proxy returns the existing items.
-- [ ] **Step 8: Update Obsidian security note** — H1–H3 fixed with the verification evidence.
+- [x] **Step 5: Restart the controller** (kill its MainPID; systemd restarts it and, via `KillMode=control-group`, also stops the old child-process apps). On start it provisions `app_shopping`, writes `/run/belgrade-os/apps/shopping.env`, and starts `belgrade-os-app@shopping.service`.
+- [x] **Step 6: Verify isolation** with a throwaway probe app run under the same template (`apps/zz_probe/main.py`, not committed): it tries `open('<ROOT>/.env')`, connects to `/var/run/docker.sock`, `192.168.68.1:80`, `1.1.1.1:443`, and `127.0.0.1:8081`, prints results, exits. Start via `systemctl start belgrade-os-app@zz_probe` (allowed by polkit) after writing its env file; read `journalctl -u belgrade-os-app@zz_probe`. Expected: `.env` → not found, docker.sock → not found/denied, LAN and internet → blocked, bridge → reachable. Then remove the probe.
+- [x] **Step 7: Verify the app** — `systemctl show belgrade-os-app@shopping -p User,MainPID`; `ps -o user= -p <pid>` is not `ivan`; Postgres `SELECT rolsuper FROM pg_roles WHERE rolname='app_shopping'` → `f`; `systemd-analyze security belgrade-os-app@shopping` exposure ≤ 3.0; end-to-end `list_items` through the MCP proxy returns the existing items.
+- [x] **Step 8: Update Obsidian security note** — H1–H3 fixed with the verification evidence.
