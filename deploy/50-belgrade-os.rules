@@ -5,7 +5,7 @@ polkit.addRule(function (action, subject) {
     }
     var unit = action.lookup("unit");
     var verb = action.lookup("verb");
-    if (unit && /^belgrade-os-app@[a-z0-9_]{1,59}\.service$/.test(unit) &&
+    if (unit && /^belgrade-os-app@[a-z0-9_]{1,23}\.service$/.test(unit) &&
         (verb === "start" || verb === "stop" || verb === "restart")) {
         return polkit.Result.YES;
     }

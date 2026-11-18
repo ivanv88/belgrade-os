@@ -25,7 +25,10 @@ SYSTEMCTL_TIMEOUT_S = 10
 _SYSTEMCTL = ["systemctl", "--no-ask-password"]  # polkit miss fails fast, never prompts
 _UNIT_NOT_LOADED = 5  # systemctl exit status for "unit not loaded"
 
-_APP_ID_RE = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
+# The unit runs as DynamicUser "bos-app-<app_id>" (one UID per app), so the id must
+# make a valid Linux user name: lowercase, at most 31 chars including the 8-char prefix.
+# It is also a subset of the per-app Postgres role charset (app_db._APP_ID_RE).
+_SYSTEMD_APP_ID_RE = re.compile(r"^[a-z0-9_]{1,23}$")
 _ENV_KEY_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 # Characters that would end/alter a double-quoted EnvironmentFile value:
 # newline/CR start a new assignment, '"' closes the quote, '\' starts an escape.
@@ -98,8 +101,9 @@ class SystemdRunner:
 
     @staticmethod
     def unit(app_id: str) -> str:
-        if not _APP_ID_RE.match(app_id):
-            raise ValueError(f"invalid app_id {app_id!r}")
+        if not _SYSTEMD_APP_ID_RE.match(app_id):
+            raise ValueError(
+                f"invalid app_id {app_id!r} for a systemd app unit: must match {_SYSTEMD_APP_ID_RE.pattern}")
         return f"belgrade-os-app@{app_id}.service"
 
     def _write_env_file(self, app_id: str, env: Dict[str, str]) -> None:

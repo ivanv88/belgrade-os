@@ -15,6 +15,11 @@ StartLimitBurst=5
 [Service]
 Type=simple
 DynamicUser=yes
+# One dynamic user (and UID) per app. Without this, every instance shares the
+# "belgrade-os-app" user, and ProtectProc=invisible (which hides only other users'
+# processes) lets one app read another's /proc/<pid>/environ — its DB password — and
+# signal it. SystemdRunner limits app ids so this stays a valid ≤31-char user name.
+User=bos-app-%i
 UMask=0077
 EnvironmentFile=/run/belgrade-os/apps/%i.env
 WorkingDirectory=@ROOT@/apps/%i

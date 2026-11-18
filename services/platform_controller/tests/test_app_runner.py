@@ -6,6 +6,7 @@ import stat
 import subprocess
 import sys
 import time
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -308,6 +309,33 @@ def test_systemd_status_calls_do_not_block_the_event_loop(tmp_path):
 
     loop_thread = asyncio.run(go())
     assert seen and all(t is not loop_thread for t in seen)
+
+
+@pytest.mark.parametrize("app_id", [
+    "Shopping",            # uppercase: not a valid Linux user name
+    "demo-app",            # must match the per-app DB role charset too
+    "a" * 24,              # "bos-app-" + 24 chars exceeds the 31-char user name limit
+])
+def test_systemd_rejects_app_id_that_cannot_name_a_dynamic_user(tmp_path, app_id):
+    runner = SystemdRunner(env_dir=tmp_path, run=FakeRun())
+    with pytest.raises(ValueError):
+        SystemdRunner.unit(app_id)
+    with pytest.raises(ValueError):
+        asyncio.run(runner.start(app_id, tmp_path, {}))
+
+
+def test_systemd_accepts_longest_valid_app_id():
+    assert SystemdRunner.unit("a" * 23) == f"belgrade-os-app@{'a' * 23}.service"
+
+
+def test_app_unit_gives_each_app_its_own_dynamic_user():
+    # With one shared DynamicUser, every app has the same UID: ProtectProc=invisible
+    # (which hides only *other* users' processes) then lets one app read another's
+    # /proc/<pid>/environ (DB password) and signal it. Found by the Lenovo probe.
+    unit = (Path(__file__).resolve().parents[3] / "deploy" / "belgrade-os-app@.service").read_text()
+    directives = [line.strip() for line in unit.splitlines()]
+    assert "DynamicUser=yes" in directives
+    assert "User=bos-app-%i" in directives
 
 
 def test_runner_isolation_flags():
